@@ -4,9 +4,7 @@ import asyncio;
 setup_logging()
 
 print("""                   
-                        Starting PIPECHART-BOT... 
-                        
-                        
+        Starting PIPECHART-BOT...    
 """)
 
 asyncio.run(Pipechart().init())

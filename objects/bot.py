@@ -16,7 +16,7 @@ class Pipechart(commands.Bot):
             owners_id=[476450702672265216, 1066787377747599381],
             strip_after_prefix=True,
             allowed_mentions=AllowedMentions(replied_user=False, everyone=False, users=False),
-            #help_command=None
+            help_command=None
         )
         self.readyAt = datetime.timestamp(datetime.now())
         self.emotes = json.load(emojisFile)
