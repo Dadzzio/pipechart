@@ -38,3 +38,69 @@ The first version focuses on one chart type and one output format, with room to 
 - The implementation is intended to be simple, local-first, and easy to extend.
 - Output targets may include HTML, PNG, or SVG depending on the chart engine used.
 
+## Bot Commands (Current)
+
+Command prefix: `\`
+
+Slash commands are also supported (`/`) and synced automatically on startup.
+
+- `\chart_validate` (alias: `\cvalidate`)
+	- Validates if attached CSV fits selected chart type.
+	- Attach required `*.csv` and optional `*.json` config in the same message.
+
+- `\chart_render` (alias: `\crender`)
+	- Renders chart image from attached CSV and optional JSON config.
+	- Attach required `*.csv` and optional `*.json` config in the same message.
+
+- `/chart_validate`
+	- Slash version of chart validation.
+	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+
+- `/chart_render`
+	- Slash version of chart rendering.
+	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+
+- `/ping`
+	- Slash latency check.
+
+Slash commands are enabled for:
+
+- Guild installs
+- User installs (User Integration)
+- Guild channels, DMs, and private channels
+
+Supported chart types:
+
+- `bar`
+- `line`
+- `pie`
+
+Supported output formats:
+
+- `png`
+- `svg`
+
+## JSON Config Schema (Optional)
+
+If no config is attached, defaults are used.
+
+```json
+{
+	"chart_type": "bar",
+	"x_column": "category",
+	"y_column": "value",
+	"title": "Sales by Category",
+	"x_label": "Category",
+	"y_label": "Sales",
+	"color": "#4E79A7",
+	"output": "png",
+	"figsize": [8, 5],
+	"dpi": 150
+}
+```
+
+Notes:
+
+- `x_column` and `y_column` are optional; if omitted, first and second CSV column are used.
+- Pie charts require non-negative values and positive total sum.
+
