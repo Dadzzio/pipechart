@@ -210,3 +210,7 @@ __marimo__/
 Thumbs.db
 */.DS_Store
 */Thumbs.db
+
+test*.py*
+test*.csv*
+test*.md*
