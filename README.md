@@ -1,21 +1,22 @@
 # PipeChart
 
-PipeChart is a Discord bot project built in Python that combines two related charting tasks into one workflow:
+PipeChart is a Discord bot project built in Python that combines chart rendering and chart-type selection into one workflow:
 
 1. Chart rendering from a CSV dataset and JSON configuration.
-2. Dataset compatibility validation for a selected chart type.
+2. Dedicated commands for bar, line, and pie charts.
 
 The bot is being developed as part of IBM internship work for class 4 practical program ZSEn Kraków for the 2025/2026. The project team includes [Bartosz Brzezanski](https://github.com/brzerzan) and [Szymon Payerhin](https://github.com/Dadzzio).
 
 ## Project Description
 
-PipeChart is designed to help users prepare chart data and generate chart outputs through a Discord bot interface. The bot can read chart configuration from a JSON file or from a Discord UI form, loads a dataset in CSV format, validates whether the dataset fits the selected chart type, and renders the final chart in a supported output format.
+PipeChart is designed to help users prepare chart data and generate chart outputs through a Discord bot interface. The bot can read chart configuration from a JSON file or from a Discord UI form, loads a dataset in CSV format, and renders the final chart in a supported output format. It can also support user integration search workflows inside Discord.
 
 The first version focuses on one chart type and one output format, with room to extend both the chart list and export options later.
 
 ## Requirements
 
 - Discord bot token configured in `.env`
+- Optional `beta=true` flag in `.env` for beta presence and startup mode
 - Python 3.14
 - CSV dataset input
 - JSON chart configuration input or Discord UI configuration input
@@ -34,7 +35,7 @@ The first version focuses on one chart type and one output format, with room to 
 
 ## Development Notes
 
-- The project combines chart rendering and dataset validation into a single Discord bot workflow.
+- The project combines chart rendering and chart-type selection into a single Discord bot workflow.
 - The implementation is intended to be simple, local-first, and easy to extend.
 - Output targets may include HTML, PNG, or SVG depending on the chart engine used.
 
@@ -44,20 +45,33 @@ Command prefix: `\`
 
 Slash commands are also supported (`/`) and synced automatically on startup.
 
-- `\chart_validate` (alias: `\cvalidate`)
-	- Validates if attached CSV fits selected chart type.
-	- Attach required `*.csv` and optional `*.json` config in the same message.
-
 - `\chart_render` (alias: `\crender`)
 	- Renders chart image from attached CSV and optional JSON config.
 	- Attach required `*.csv` and optional `*.json` config in the same message.
 
-- `/chart_validate`
-	- Slash version of chart validation.
-	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+- `\bar` (alias: `\cbar`)
+	- Renders a bar chart from attached CSV and optional JSON config.
+
+- `\line` (alias: `\cline`)
+	- Renders a line chart from attached CSV and optional JSON config.
+
+- `\pie` (alias: `\cpie`)
+	- Renders a pie chart from attached CSV and optional JSON config.
 
 - `/chart_render`
 	- Slash version of chart rendering.
+	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+
+- `/bar`
+	- Slash version of bar chart rendering.
+	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+
+- `/line`
+	- Slash version of line chart rendering.
+	- Parameters: `csv_file` (required), `config_file` (optional JSON).
+
+- `/pie`
+	- Slash version of pie chart rendering.
 	- Parameters: `csv_file` (required), `config_file` (optional JSON).
 
 - `/ping`

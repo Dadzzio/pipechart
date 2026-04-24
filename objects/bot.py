@@ -60,6 +60,11 @@ class Pipechart(commands.Bot):
             for dir in os.listdir('./cogs'):
                     for file in os.listdir(f'./cogs/{dir}'):
                         if file.endswith('.py'):
-                            await self.load_extension(f'cogs.{dir}.{file[:-3]}')
+                            extension = f'cogs.{dir}.{file[:-3]}'
+                            try:
+                                await self.load_extension(extension)
+                            except commands.errors.NoEntryPointError:
+                                # Helper modules can live in cogs directories but are not extensions.
+                                continue
             await self.load_extension('jishaku')
             await self.start(self._get_token())

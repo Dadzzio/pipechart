@@ -214,3 +214,4 @@ Thumbs.db
 test*.py*
 test*.csv*
 test*.md*
+test*.json*
