@@ -92,6 +92,24 @@ class charts(commands.Cog):
         except Exception as error:
             await ctx.error(str(error))
 
+    @commands.command(name="bar", aliases=["cbar"])
+    async def bar(self, ctx):
+        """Render a bar chart from CSV + optional JSON config."""
+        try:
+            if not ctx.message.attachments:
+                await ctx.error("Attach CSV file (and optional JSON config) to render a bar chart.")
+                return
+
+            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
+            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
+
+            if csv_attachment is None:
+                await ctx.error("CSV attachment not found.")
+                return
+
+            await self._render_chart_response(ctx, csv_attachment, json_attachment, "bar", "Bar chart rendered")
+        except Exception as error:
+            await ctx.error(str(error))
 
 async def setup(bot):
     await bot.add_cog(charts(bot))
