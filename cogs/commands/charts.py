@@ -111,5 +111,123 @@ class charts(commands.Cog):
         except Exception as error:
             await ctx.error(str(error))
 
+    @commands.command(name="line", aliases=["cline"])
+    async def line(self, ctx):
+        """Render a line chart from CSV + optional JSON config."""
+        try:
+            if not ctx.message.attachments:
+                await ctx.error("Attach CSV file (and optional JSON config) to render a line chart.")
+                return
+
+            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
+            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
+
+            if csv_attachment is None:
+                await ctx.error("CSV attachment not found.")
+                return
+
+            await self._render_chart_response(ctx, csv_attachment, json_attachment, "line", "Line chart rendered")
+        except Exception as error:
+            await ctx.error(str(error))
+
+    @commands.command(name="pie", aliases=["cpie"])
+    async def pie(self, ctx):
+        """Render a pie chart from CSV + optional JSON config."""
+        try:
+            if not ctx.message.attachments:
+                await ctx.error("Attach CSV file (and optional JSON config) to render a pie chart.")
+                return
+
+            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
+            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
+
+            if csv_attachment is None:
+                await ctx.error("CSV attachment not found.")
+                return
+
+            await self._render_chart_response(ctx, csv_attachment, json_attachment, "pie", "Pie chart rendered")
+        except Exception as error:
+            await ctx.error(str(error))
+
+    @app_commands.command(name="chart_render", description="Render a chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def chart_render_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                title="Chart rendered",
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="bar", description="Render a bar chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def bar_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="bar",
+                title="Bar chart rendered",
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="line", description="Render a line chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def line_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="line",
+                title="Line chart rendered",
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="pie", description="Render a pie chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def pie_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="pie",
+                title="Pie chart rendered",
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+
 async def setup(bot):
     await bot.add_cog(charts(bot))
