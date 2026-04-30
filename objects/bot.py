@@ -10,6 +10,7 @@ emojisFile = open('./configs/emojis.json')
 load_dotenv()
 class Pipechart(commands.Bot):
     def __init__(self):
+        self._prefix = self._get_prefix()
         super().__init__(
             command_prefix=commands.when_mentioned_or(self.prefix),
             intents=Intents.all(),
@@ -21,8 +22,8 @@ class Pipechart(commands.Bot):
         self.readyAt = datetime.timestamp(datetime.now())
         self.emotes = json.load(emojisFile)
     @property
-    def prefix(self) -> Literal['\\']:
-        return "\\"
+    def prefix(self) -> str:
+        return self._prefix
     @property
     def name(self) -> Literal['Pipechart']:
         return "Pipechart"
@@ -35,6 +36,15 @@ class Pipechart(commands.Bot):
     
     async def get_context(self, message, *, cls=context):
         return await super().get_context(message, cls=cls)
+
+    def _get_prefix(self) -> str:
+        prefix = (
+            os.getenv("PREFIX")
+            or os.getenv("BOT_PREFIX")
+            or "\\\\"
+        )
+        prefix = prefix.strip().strip('"').strip("'")
+        return prefix or "\\\\"
 
     def _get_token(self) -> str:
         token = (
