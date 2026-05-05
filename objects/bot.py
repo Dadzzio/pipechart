@@ -41,10 +41,10 @@ class Pipechart(commands.Bot):
         prefix = (
             os.getenv("PREFIX")
             or os.getenv("BOT_PREFIX")
-            or "\\\\"
+            or "\\"
         )
         prefix = prefix.strip().strip('"').strip("'")
-        return prefix or "\\\\"
+        return prefix or "\\"
 
     def _get_token(self) -> str:
         token = (
