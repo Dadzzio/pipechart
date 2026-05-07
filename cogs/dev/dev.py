@@ -1,5 +1,6 @@
 from discord.ext import commands
 import os
+import sys
 
 class dev(commands.Cog):
     def __init__(self, bot):
@@ -70,6 +71,23 @@ class dev(commands.Cog):
                 await self._load_extension(ctx, extension)
         except Exception as e:
             await ctx.error(e)
+
+    @commands.is_owner()
+    @commands.command(aliases=['s'])
+    async def sync(self, ctx):
+        """Sync app commands with Discord."""
+        try:
+            synced = await self.bot.tree.sync()
+            await ctx.ok(f"Synced {len(synced)} app commands!")
+        except Exception as e:
+            await ctx.error(str(e))
+
+    @commands.is_owner()
+    @commands.command(aliases=['boom', 'die', 'crash'])
+    async def kaboom(self, ctx):
+        """💥 Explode the entire bot process."""
+        await ctx.ok("💥 KABOOM! Bot is crashing...")
+        sys.exit(1)
 
 
 async def setup(bot):

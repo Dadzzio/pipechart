@@ -10,7 +10,7 @@ class activity(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         beta_enabled = os.getenv("beta", "false").strip().lower() == "true"
-        prefix_hint = f"{self.bot.prefix}chart_render"
+        prefix_hint = f"/chart_render"
 
         if beta_enabled:
             await self.bot.change_presence(status=discord.Status.dnd, activity=discord.Game(f"beta... {prefix_hint}"))
@@ -22,6 +22,7 @@ class activity(commands.Cog):
             )
         print(f"\n{len(self.bot.commands)} commands loaded", end=" ")
         print(f"on {len(self.bot.guilds)} servers...")
+        await self.bot.tree.sync()
         print("\nPipechart is Online!")
 
 async def setup(bot):
