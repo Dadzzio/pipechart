@@ -121,8 +121,8 @@ async def prepare_chart_data(
     cfg = parse_config(config_raw)
     if chart_type is not None:
         cfg = force_chart_type(cfg, chart_type)
-    if cfg["output"] not in {"png", "svg"}:
-        raise ValueError("Unsupported output format. Use 'png' or 'svg'.")
+    if cfg["output"] not in {"png", "svg", "pdf"}:
+        raise ValueError("Unsupported output format. Use 'png', 'svg', or 'pdf'.")
 
     rows, columns = read_csv_rows(csv_raw)
     x_col, y_col = pick_columns(cfg, columns)

@@ -1,7 +1,6 @@
 import io
 
 import discord
-import traceback
 from discord import app_commands
 from discord.ext import commands
 
@@ -26,12 +25,14 @@ class charts(commands.Cog):
         config_file: discord.Attachment | None = None,
         original_message: discord.Message | None = None,
         session_state: dict | None = None,
+        fixed_chart_type: str | None = None,
     ) -> discord.ui.View:
         cog = self
         stored_config = {}  # Store config values for edit functionality
         if session_state is None:
-            session_state = {"cancelled": False, "config_messages": []}
+            session_state = {"cancelled": False, "completed": False, "config_messages": []}
         owner_id = session_state.get("owner_id")
+        fixed_chart_type = fixed_chart_type.lower() if fixed_chart_type else None
 
         async def _ensure_owner(interaction: discord.Interaction) -> bool:
             if owner_id is None or interaction.user.id == owner_id:
@@ -44,47 +45,23 @@ class charts(commands.Cog):
 
         def _parse_output(value: str | None) -> str:
             output_fmt = value.lower().strip() if value else "png"
-            return output_fmt if output_fmt in ["png", "svg"] else "png"
+            return output_fmt if output_fmt in ["png", "svg", "pdf"] else "png"
 
         def _create_modal(chart_type: str):
             return PieConfigModal() if chart_type == "pie" else ConfigModal(chart_type)
 
-        def _debug_modal(modal, label: str = "modal"):
-            try:
-                print(f"--- DEBUG {label} ---")
-                print("modal class:", modal.__class__)
-                # show some public attributes
-                public_dir = [a for a in dir(modal) if not a.startswith("_")]
-                print("dir (sample):", public_dir[:60])
-                # try common attribute names for children
-                children = None
-                for attr in ("children", "_children", "components", "_state", "_items"):
-                    if hasattr(modal, attr):
-                        try:
-                            children = getattr(modal, attr)
-                            break
-                        except Exception:
-                            children = None
-                print("children type:", type(children))
-                if children:
-                    for i, ch in enumerate(children):
-                        try:
-                            print(f" child {i}: class={ch.__class__}")
-                            ch_dir = [n for n in dir(ch) if not n.startswith("_")]
-                            print("   dir:", ch_dir[:40])
-                            for attr in ("type", "style", "custom_id", "label", "placeholder", "default", "value", "min_length", "max_length"):
-                                try:
-                                    val = getattr(ch, attr)
-                                except Exception:
-                                    val = None
-                                print(f"   {attr} = {val}")
-                        except Exception:
-                            print(f"  failed to inspect child {i}")
-                print("--- END DEBUG ---")
-            except Exception:
-                print("failed to dump modal info")
-                import traceback
-                traceback.print_exc()
+        def _apply_stored_defaults(modal, chart_type: str):
+            if not stored_config or stored_config.get("chart_type") != chart_type:
+                return
+
+            modal.title_input.default = stored_config.get("title", "PipeChart")
+            if chart_type == "pie" and hasattr(modal, "colors_input"):
+                modal.colors_input.default = stored_config.get("colors", "")
+            elif chart_type != "pie":
+                modal.x_label_input.default = stored_config.get("x_label", "")
+                modal.y_label_input.default = stored_config.get("y_label", "")
+                modal.color_input.default = stored_config.get("color", "#4E79A7")
+            modal.output_input.default = stored_config.get("output", "png")
 
         class ConfigModal(discord.ui.Modal, title="Configure Your Chart"):
             title_input = discord.ui.TextInput(
@@ -114,8 +91,8 @@ class charts(commands.Cog):
                 default="#4E79A7"
             )
             output_input = discord.ui.TextInput(
-                label="Output Format (png/svg)",
-                placeholder="png",
+                label="Output Format (png/svg/pdf)",
+                placeholder="png, svg, or pdf",
                 max_length=3,
                 required=False,
                 default="png"
@@ -132,13 +109,16 @@ class charts(commands.Cog):
                     await interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
                     return
 
+                # Immediately defer to prevent timeout
+                await interaction.response.defer()
+                
                 try:
                     cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
                         csv_file,
                         config_file,
                         chart_type=self.chart_type,
                     )
-
+                    
                     # Apply custom config
                     if self.title_input.value:
                         cfg["title"] = self.title_input.value
@@ -148,13 +128,14 @@ class charts(commands.Cog):
                         cfg["y_label"] = self.y_label_input.value
 
                     if self.color_input.value:
+                        # Let matplotlib validate accepted color formats.
                         cfg["color"] = self.color_input.value.strip()
-
+                    
                     output_fmt = self.output_input.value.lower().strip() if self.output_input.value else "png"
-                    if output_fmt not in ["png", "svg"]:
+                    if output_fmt not in ["png", "svg", "pdf"]:
                         output_fmt = "png"
                     cfg["output"] = output_fmt
-
+                    
                     # Store config for edit functionality
                     stored_config.update({
                         "title": self.title_input.value or "PipeChart",
@@ -164,239 +145,7 @@ class charts(commands.Cog):
                         "output": output_fmt,
                         "chart_type": self.chart_type,
                     })
-
-                    # If this is a bar chart and CSV has multiple columns, open iterative per-column rename modals
-                    if self.chart_type == "bar" and _columns and len(_columns) > 1:
-                        total = len(_columns)
-
-                        class ColumnRenameModal(discord.ui.Modal, title="Rename column"):
-                            def __init__(self, idx: int, mapping: dict, prepared_cfg, prepared_rows, prepared_columns, prepared_labels, prepared_values):
-                                # create modal inputs dynamically to avoid mutating class-level TextInput
-                                super().__init__()
-                                self.idx = idx
-                                self.mapping = mapping
-                                self.prep_cfg = prepared_cfg
-                                self.prep_rows = prepared_rows
-                                self.prep_columns = prepared_columns
-                                self.prep_labels = prepared_labels
-                                self.prep_values = prepared_values
-                                header = self.prep_columns[self.idx]
-                                placeholder = f"New name for '{header}' ({self.idx+1}/{total})"
-                                default_value = mapping.get(header, header)
-                                self.rename_input = discord.ui.TextInput(
-                                    label="New name",
-                                    placeholder=placeholder,
-                                    required=False,
-                                    max_length=200,
-                                    default=default_value,
-                                )
-                                self.add_item(self.rename_input)
-
-                            async def on_submit(self, modal_interaction: discord.Interaction):
-                                if not await _ensure_owner(modal_interaction):
-                                    return
-                                if session_state.get("cancelled"):
-                                    await modal_interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
-                                    return
-
-                                header = self.prep_columns[self.idx]
-                                new_name = (self.rename_input.value or "").strip()
-                                if new_name:
-                                    self.mapping[header] = new_name
-
-                                next_idx = self.idx + 1
-                                if next_idx < total:
-                                    # show next modal
-                                    next_modal = ColumnRenameModal(next_idx, self.mapping, self.prep_cfg, self.prep_rows, self.prep_columns, self.prep_labels, self.prep_values)
-                                    try:
-                                        _debug_modal(next_modal, "next_modal")
-                                        await modal_interaction.response.send_modal(next_modal)
-                                        return
-                                    except discord.errors.HTTPException as http_e:
-                                        print("HTTPException while sending next_modal:", repr(http_e))
-                                        try:
-                                            # attempt to read response body
-                                            resp = getattr(http_e, 'response', None)
-                                            if resp is not None:
-                                                try:
-                                                    text = await resp.text()
-                                                    print("response.text():", text)
-                                                except Exception:
-                                                    print("failed to read resp.text()")
-                                        except Exception:
-                                            pass
-                                        tb = traceback.format_exc()
-                                        print(tb)
-                                        try:
-                                            if modal_interaction.response.is_done():
-                                                await modal_interaction.followup.send("⚠️ Modal failed to open; rendering without further renames.", ephemeral=True)
-                                            else:
-                                                await modal_interaction.response.send_message("⚠️ Modal failed to open; rendering without further renames.", ephemeral=True)
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        tb = traceback.format_exc()
-                                        print(tb)
-                                        try:
-                                            if modal_interaction.response.is_done():
-                                                await modal_interaction.followup.send("⚠️ Modal failed to open; rendering without further renames.", ephemeral=True)
-                                            else:
-                                                await modal_interaction.response.send_message("⚠️ Modal failed to open; rendering without further renames.", ephemeral=True)
-                                        except Exception:
-                                            pass
-
-                                # finished collecting names — apply mapping and render
-                                mapping = self.mapping
-                                labels_mapped = [mapping.get(lbl, lbl) for lbl in self.prep_labels]
-                                stored_config["column_renames"] = ",".join([f"{k}:{v}" for k, v in mapping.items()])
-
-                                try:
-                                    file = cog._build_chart_file(self.prep_cfg, labels_mapped, self.prep_values)
-                                    embed = context.chart_embed(
-                                        chart_type=self.prep_cfg['chart_type'],
-                                        rows_count=len(self.prep_rows),
-                                        user_name=modal_interaction.user.display_name,
-                                        user_avatar=modal_interaction.user.display_avatar,
-                                        config=self.prep_cfg,
-                                    )
-
-                                    config_done_embed = discord.Embed(
-                                        title="✅ Chart rendered!",
-                                        description="Configuration submitted successfully.",
-                                        color=0x37EC2A,
-                                    )
-
-                                    public_updated = False
-                                    if original_message:
-                                        try:
-                                            edit_view = EditChartView()
-                                            await original_message.edit(embed=embed, attachments=[file], view=edit_view)
-                                            public_updated = True
-                                        except:
-                                            public_updated = False
-
-                                    if not public_updated:
-                                        fallback_file = cog._build_chart_file(self.prep_cfg, labels_mapped, self.prep_values)
-                                        await modal_interaction.followup.send(embed=embed, file=fallback_file)
-
-                                    for config_message in session_state.get("config_messages", []):
-                                        try:
-                                            await config_message.edit(embed=config_done_embed, view=None)
-                                        except:
-                                            pass
-
-                                except Exception as e:
-                                    await modal_interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
-
-                        # start iterative modal chain
-                        initial_mapping = {}
-                        if stored_config.get("column_renames"):
-                            # parse previous stored mapping into dict
-                            try:
-                                for part in [p.strip() for p in stored_config.get("column_renames", "").split(",") if p.strip()]:
-                                    if ":" in part:
-                                        k, v = part.split(":", 1)
-                                        initial_mapping[k.strip()] = v.strip()
-                            except Exception:
-                                initial_mapping = {}
-
-                        first_modal = ColumnRenameModal(0, initial_mapping, cfg, rows, _columns, labels, values)
-                        try:
-                            _debug_modal(first_modal, "first_modal")
-                            await interaction.response.send_modal(first_modal)
-                            return
-                        except discord.errors.HTTPException as http_e:
-                            print("HTTPException while sending first_modal:", repr(http_e))
-                            try:
-                                resp = getattr(http_e, 'response', None)
-                                if resp is not None:
-                                    try:
-                                        text = await resp.text()
-                                        print("response.text():", text)
-                                    except Exception:
-                                        print("failed to read resp.text()")
-                            except Exception:
-                                pass
-                            tb = traceback.format_exc()
-                            print(tb)
-                            # Inform the user (ephemeral) and fall back to rendering without renames
-                            try:
-                                if interaction.response.is_done():
-                                    await interaction.followup.send("⚠️ Column rename modal failed to open; rendered without renames.", ephemeral=True)
-                                else:
-                                    await interaction.response.send_message("⚠️ Column rename modal failed to open; rendered without renames.", ephemeral=True)
-                            except Exception:
-                                pass
-                            try:
-                                file = cog._build_chart_file(cfg, labels, values)
-                                embed = context.chart_embed(
-                                    chart_type=cfg['chart_type'],
-                                    rows_count=len(rows),
-                                    user_name=interaction.user.display_name,
-                                    user_avatar=interaction.user.display_avatar,
-                                    config=cfg,
-                                )
-                                public_updated = False
-                                if original_message:
-                                    try:
-                                        edit_view = EditChartView()
-                                        await original_message.edit(embed=embed, attachments=[file], view=edit_view)
-                                        public_updated = True
-                                    except:
-                                        public_updated = False
-                                if not public_updated:
-                                    fallback_file = cog._build_chart_file(cfg, labels, values)
-                                    await interaction.followup.send(embed=embed, file=fallback_file)
-                                for config_message in session_state.get("config_messages", []):
-                                    try:
-                                        await config_message.edit(embed=discord.Embed(title="⚠️ Mapping unavailable", description="Column rename modal failed to open; rendered without renames.", color=0xFFA500), view=None)
-                                    except:
-                                        pass
-                                return
-                            except Exception as e:
-                                await interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
-                                return
-                        except Exception:
-                            tb = traceback.format_exc()
-                            print(tb)
-                            try:
-                                if interaction.response.is_done():
-                                    await interaction.followup.send("⚠️ Column rename modal failed to open; rendered without renames.", ephemeral=True)
-                                else:
-                                    await interaction.response.send_message("⚠️ Column rename modal failed to open; rendered without renames.", ephemeral=True)
-                            except Exception:
-                                pass
-                            try:
-                                file = cog._build_chart_file(cfg, labels, values)
-                                embed = context.chart_embed(
-                                    chart_type=cfg['chart_type'],
-                                    rows_count=len(rows),
-                                    user_name=interaction.user.display_name,
-                                    user_avatar=interaction.user.display_avatar,
-                                    config=cfg,
-                                )
-                                public_updated = False
-                                if original_message:
-                                    try:
-                                        edit_view = EditChartView()
-                                        await original_message.edit(embed=embed, attachments=[file], view=edit_view)
-                                        public_updated = True
-                                    except:
-                                        public_updated = False
-                                if not public_updated:
-                                    fallback_file = cog._build_chart_file(cfg, labels, values)
-                                    await interaction.followup.send(embed=embed, file=fallback_file)
-                                for config_message in session_state.get("config_messages", []):
-                                    try:
-                                        await config_message.edit(embed=discord.Embed(title="⚠️ Mapping unavailable", description="Column rename modal failed to open; rendered without renames.", color=0xFFA500), view=None)
-                                    except:
-                                        pass
-                                return
-                            except Exception as e:
-                                await interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
-                                return
-
-                    # No renames required or not a bar chart — render immediately
+                    
                     file = cog._build_chart_file(cfg, labels, values)
                     embed = context.chart_embed(
                         chart_type=cfg['chart_type'],
@@ -411,7 +160,8 @@ class charts(commands.Cog):
                         description="Configuration submitted successfully.",
                         color=0x37EC2A,
                     )
-
+                    
+                    # Edit the original public message with the final chart
                     public_updated = False
                     if original_message:
                         try:
@@ -427,14 +177,16 @@ class charts(commands.Cog):
                         fallback_file = cog._build_chart_file(cfg, labels, values)
                         await interaction.followup.send(embed=embed, file=fallback_file)
 
+                    session_state["completed"] = True
+
                     for config_message in session_state.get("config_messages", []):
                         try:
                             await config_message.edit(embed=config_done_embed, view=None)
                         except:
                             pass
-
+                        
                 except Exception as e:
-                    await interaction.response.send_message(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
+                    await interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
 
         class PieConfigModal(discord.ui.Modal, title="Configure Pie Chart"):
             title_input = discord.ui.TextInput(
@@ -451,8 +203,8 @@ class charts(commands.Cog):
                 required=False
             )
             output_input = discord.ui.TextInput(
-                label="Output Format (png/svg)",
-                placeholder="png",
+                label="Output Format (png/svg/pdf)",
+                placeholder="png, svg, or pdf",
                 max_length=3,
                 required=False,
                 default="png"
@@ -521,6 +273,8 @@ class charts(commands.Cog):
                         fallback_file = cog._build_chart_file(cfg, labels, values)
                         await interaction.followup.send(embed=embed, file=fallback_file)
 
+                    session_state["completed"] = True
+
                     for config_message in session_state.get("config_messages", []):
                         try:
                             await config_message.edit(embed=config_done_embed, view=None)
@@ -572,6 +326,11 @@ class charts(commands.Cog):
             async def callback(self, interaction: discord.Interaction):
                 if not await _ensure_owner(interaction):
                     return
+                if fixed_chart_type:
+                    modal = _create_modal(fixed_chart_type)
+                    _apply_stored_defaults(modal, fixed_chart_type)
+                    await interaction.response.send_modal(modal)
+                    return
                 # Show chart type selector again
                 chart_options = [
                     discord.SelectOption(label="📊 Bar", value="bar", description="Bar chart visualization"),
@@ -603,7 +362,6 @@ class charts(commands.Cog):
                                     modal.y_label_input.default = stored_config.get("y_label", "")
                                     modal.color_input.default = stored_config.get("color", "#4E79A7")
                                 modal.output_input.default = stored_config.get("output", "png")
-                        _debug_modal(modal, "edit_modal")
                         await select_interaction.response.send_modal(modal)
                 
                 class EditChartTypeView(discord.ui.View):
@@ -617,6 +375,25 @@ class charts(commands.Cog):
                     color=0x4E79A7,
                 )
                 await interaction.response.send_message(embed=embed, view=EditChartTypeView(), ephemeral=True)
+
+        class ConfigureButton(discord.ui.Button):
+            def __init__(self):
+                super().__init__(style=discord.ButtonStyle.primary, label="⚙️ Configure", emoji="🛠️")
+
+            async def callback(self, interaction: discord.Interaction):
+                if not await _ensure_owner(interaction):
+                    return
+                if session_state.get("cancelled"):
+                    await interaction.response.send_message("❌ Configuration was cancelled. Run the command again.", ephemeral=True)
+                    return
+
+                if not fixed_chart_type:
+                    await interaction.response.send_message("❌ Missing chart preset.", ephemeral=True)
+                    return
+
+                modal = _create_modal(fixed_chart_type)
+                _apply_stored_defaults(modal, fixed_chart_type)
+                await interaction.response.send_modal(modal)
 
         class EditChartView(discord.ui.View):
             def __init__(self):
@@ -640,17 +417,22 @@ class charts(commands.Cog):
                     return
                 chart_type = self.values[0]
                 modal = _create_modal(chart_type)
-                _debug_modal(modal, "charttype_modal")
                 await interaction.response.send_modal(modal)
 
         class ChartTypeView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=300)  # 5 minutes
-                self.add_item(ChartTypeSelect())
+                if fixed_chart_type:
+                    self.add_item(ConfigureButton())
+                else:
+                    self.add_item(ChartTypeSelect())
                 self.add_item(CancelButton())
             
             async def on_timeout(self):
                 """Delete the original message if timeout"""
+                if session_state.get("completed") or session_state.get("cancelled"):
+                    return
+
                 if original_message:
                     try:
                         await original_message.delete()
@@ -658,6 +440,118 @@ class charts(commands.Cog):
                         pass
 
         return ChartTypeView()
+
+    async def _start_chart_configuration(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+        fixed_chart_type: str | None = None,
+    ):
+        session_state = {
+            "cancelled": False,
+            "completed": False,
+            "config_messages": [],
+            "owner_id": interaction.user.id,
+            "preset_chart_type": fixed_chart_type.lower() if fixed_chart_type else None,
+        }
+
+        cog = self
+
+        class BuildingEditView(discord.ui.View):
+            def __init__(self, csv_attachment, cfg_file, state: dict):
+                super().__init__(timeout=300)
+                self.csv_file = csv_attachment
+                self.config_file = cfg_file
+                self.state = state
+                self.original_msg = None
+
+            @discord.ui.button(style=discord.ButtonStyle.secondary, label="✏️ Configure", emoji="⚙️")
+            async def edit_button(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+                if button_interaction.user.id != self.state.get("owner_id"):
+                    await button_interaction.response.send_message(
+                        "❌ Only the command author can use this panel.",
+                        ephemeral=True,
+                    )
+                    return
+                if self.state.get("cancelled"):
+                    await button_interaction.response.send_message(
+                        "❌ Configuration was cancelled. Run the command again.",
+                        ephemeral=True,
+                    )
+                    return
+
+                config_embed = discord.Embed(
+                    title="📊 Chart Wizard",
+                    description=(
+                        f"Configure the {self.state['preset_chart_type'].title()} chart below."
+                        if self.state.get("preset_chart_type")
+                        else "Select chart type and configure it in the next step"
+                    ),
+                    color=0x4E79A7,
+                )
+                config_embed.add_field(
+                    name="⏱️ Timeout",
+                    value="Configuration window closes in 5 minutes. If no selection is made, the build message will be deleted.",
+                    inline=False,
+                )
+                await button_interaction.response.defer(ephemeral=True)
+                config_message = await button_interaction.followup.send(
+                    embed=config_embed,
+                    view=cog._chart_type_select_view(
+                        self.csv_file,
+                        self.config_file,
+                        self.original_msg,
+                        session_state=self.state,
+                        fixed_chart_type=self.state.get("preset_chart_type"),
+                    ),
+                    ephemeral=True,
+                    wait=True,
+                )
+                if config_message:
+                    self.state.setdefault("config_messages", []).append(config_message)
+
+        preset_name = (fixed_chart_type or "chart").title()
+        building_embed = discord.Embed(
+            title=f"🔨 Building {preset_name}...",
+            description="Chart is being prepared. Click Configure to set chart options, or check your private message.",
+            color=0xFFA500,
+        )
+        building_embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+
+        view = BuildingEditView(csv_file, config_file, session_state)
+        await interaction.response.send_message(embed=building_embed, view=view)
+        original_message = await interaction.original_response()
+        view.original_msg = original_message
+
+        config_embed = discord.Embed(
+            title="📊 Chart Wizard",
+            description=(
+                f"Configure the {preset_name} chart below."
+                if fixed_chart_type
+                else "Select chart type and configure it in the next step"
+            ),
+            color=0x4E79A7,
+        )
+        config_embed.add_field(
+            name="⏱️ Timeout",
+            value="Configuration window closes in 5 minutes. If no selection is made, the build message will be deleted.",
+            inline=False,
+        )
+        config_message = await interaction.followup.send(
+            embed=config_embed,
+            view=self._chart_type_select_view(
+                csv_file,
+                config_file,
+                original_message,
+                session_state=session_state,
+                fixed_chart_type=fixed_chart_type,
+            ),
+            ephemeral=True,
+            wait=True,
+        )
+        if config_message:
+            session_state.setdefault("config_messages", []).append(config_message)
 
     async def _render_chart_response(
         self,
@@ -892,6 +786,10 @@ class charts(commands.Cog):
         config_file: discord.Attachment | None = None,
     ):
         try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="bar")
+                return
+
             await self._render_chart_slash_response(
                 interaction,
                 csv_file,
@@ -912,6 +810,10 @@ class charts(commands.Cog):
         config_file: discord.Attachment | None = None,
     ):
         try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="line")
+                return
+
             await self._render_chart_slash_response(
                 interaction,
                 csv_file,
@@ -932,6 +834,10 @@ class charts(commands.Cog):
         config_file: discord.Attachment | None = None,
     ):
         try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="pie")
+                return
+
             await self._render_chart_slash_response(
                 interaction,
                 csv_file,

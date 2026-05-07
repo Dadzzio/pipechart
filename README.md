@@ -17,6 +17,7 @@ The first version focuses on one chart type and one output format, with room to 
 
 - Discord bot token configured in `.env`
 - Optional `beta=true` flag in `.env` for beta presence and startup mode
+- Optional `DEBUG=true` flag in `.env` to enable startup/debug prints
 - Python 3.14
 - CSV dataset input
 - JSON chart configuration input or Discord UI configuration input

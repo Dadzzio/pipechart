@@ -1,4 +1,5 @@
 import logging
+import os
 import colorama
 class Formater(logging.Formatter):
     yellow = "\x1b[33;20m"
@@ -27,7 +28,8 @@ def setup_logging():
     log.setLevel(logging.DEBUG)
 
     console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
+    debug_enabled = os.getenv("DEBUG", "false").strip().lower() == "true"
+    console.setLevel(logging.DEBUG if debug_enabled else logging.INFO)
     console.setFormatter(Formater())
 
     log.addHandler(console)
