@@ -3,6 +3,7 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands
+import matplotlib.colors as mcolors
 
 from cogs.commands.charts_data import prepare_chart_data
 from cogs.commands.charts_rendering import build_chart
@@ -30,18 +31,40 @@ class charts(commands.Cog):
         cog = self
         stored_config = {}  # Store config values for edit functionality
         if session_state is None:
-            session_state = {"cancelled": False, "completed": False, "config_messages": []}
+            session_state = {"cancelled": False, "completed": False, "config_messages": [], "edit_messages": []}
         owner_id = session_state.get("owner_id")
         fixed_chart_type = fixed_chart_type.lower() if fixed_chart_type else None
 
         async def _ensure_owner(interaction: discord.Interaction) -> bool:
             if owner_id is None or interaction.user.id == owner_id:
                 return True
-            if interaction.response.is_done():
-                await interaction.followup.send("❌ Only the command author can use this panel.", ephemeral=True)
-            else:
-                await interaction.response.send_message("❌ Only the command author can use this panel.", ephemeral=True)
+            await context.app_error(interaction, "Only the command author can use this panel.")
             return False
+
+        async def _update_tracked_panel_messages(
+            interaction: discord.Interaction,
+            embed: discord.Embed,
+            *,
+            clear_view: bool = True,
+        ) -> bool:
+            updated_any = False
+            kwargs = {"embed": embed}
+            if clear_view:
+                kwargs["view"] = None
+
+            combined = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+            for tracked_message in combined:
+                try:
+                    await tracked_message.edit(**kwargs)
+                    updated_any = True
+                except Exception:
+                    try:
+                        await interaction.followup.edit_message(tracked_message.id, **kwargs)
+                        updated_any = True
+                    except Exception:
+                        pass
+
+            return updated_any
 
         def _parse_output(value: str | None) -> str:
             output_fmt = value.lower().strip() if value else "png"
@@ -106,12 +129,13 @@ class charts(commands.Cog):
                 if not await _ensure_owner(interaction):
                     return
                 if session_state.get("cancelled"):
-                    await interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
+                    await context.app_error(interaction, "Configuration was cancelled. Start /chart_render again.")
                     return
 
                 # Immediately defer to prevent timeout
                 await interaction.response.defer()
                 
+                success = False
                 try:
                     cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
                         csv_file,
@@ -128,8 +152,17 @@ class charts(commands.Cog):
                         cfg["y_label"] = self.y_label_input.value
 
                     if self.color_input.value:
-                        # Let matplotlib validate accepted color formats.
-                        cfg["color"] = self.color_input.value.strip()
+                        val = self.color_input.value.strip()
+                        if not mcolors.is_color_like(val):
+                            err_text = f"Invalid color value: {val}. Use a color name or hex like '#4E79A7'."
+                            error_embed = discord.Embed(
+                                color=0xF54336,
+                                description=f"{interaction.client.emotes['main']['no']} {err_text}",
+                            )
+                            if not await _update_tracked_panel_messages(interaction, error_embed):
+                                await context.app_error(interaction, err_text)
+                            return
+                        cfg["color"] = val
                     
                     output_fmt = self.output_input.value.lower().strip() if self.output_input.value else "png"
                     if output_fmt not in ["png", "svg", "pdf"]:
@@ -173,20 +206,24 @@ class charts(commands.Cog):
                             public_updated = False
 
                     if not public_updated:
-                        # Build a fresh file object for fallback send.
+                        # Build a fresh file object for fallback send and include edit view.
                         fallback_file = cog._build_chart_file(cfg, labels, values)
-                        await interaction.followup.send(embed=embed, file=fallback_file)
+                        sent = await interaction.followup.send(embed=embed, file=fallback_file, view=EditChartView(), wait=True)
+                        if sent:
+                            session_state.setdefault("config_messages", []).append(sent)
 
                     session_state["completed"] = True
-
-                    for config_message in session_state.get("config_messages", []):
-                        try:
-                            await config_message.edit(embed=config_done_embed, view=None)
-                        except:
-                            pass
-                        
+                    success = True
                 except Exception as e:
-                    await interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
+                    # Update edit/config messages to show the error.
+                    err_text = f"Error rendering chart: {str(e)}"
+                    error_embed = discord.Embed(color=0xF54336, description=f"{interaction.client.emotes['main']['no']} {err_text}")
+                    if not await _update_tracked_panel_messages(interaction, error_embed):
+                        await context.app_error(interaction, err_text)
+
+                # Only update config/edit messages when rendering succeeded
+                if success:
+                    await _update_tracked_panel_messages(interaction, config_done_embed)
 
         class PieConfigModal(discord.ui.Modal, title="Configure Pie Chart"):
             title_input = discord.ui.TextInput(
@@ -214,11 +251,12 @@ class charts(commands.Cog):
                 if not await _ensure_owner(interaction):
                     return
                 if session_state.get("cancelled"):
-                    await interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
+                    await context.app_error(interaction, "Configuration was cancelled. Start /chart_render again.")
                     return
 
                 await interaction.response.defer()
 
+                success = False
                 try:
                     cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
                         csv_file,
@@ -233,8 +271,21 @@ class charts(commands.Cog):
                     cfg["output"] = output_fmt
 
                     parsed_colors = []
+                    invalid_colors = []
                     if self.colors_input.value:
                         parsed_colors = [c.strip() for c in self.colors_input.value.split(",") if c.strip()]
+                        for c in parsed_colors:
+                            if not mcolors.is_color_like(c):
+                                invalid_colors.append(c)
+                        if invalid_colors:
+                            err_text = f"Invalid color(s): {', '.join(invalid_colors)}. Use color names or hex like '#4E79A7'."
+                            error_embed = discord.Embed(
+                                color=0xF54336,
+                                description=f"{interaction.client.emotes['main']['no']} {err_text}",
+                            )
+                            if not await _update_tracked_panel_messages(interaction, error_embed):
+                                await context.app_error(interaction, err_text)
+                            return
                         if parsed_colors:
                             cfg["colors"] = parsed_colors
 
@@ -271,22 +322,26 @@ class charts(commands.Cog):
 
                     if not public_updated:
                         fallback_file = cog._build_chart_file(cfg, labels, values)
-                        await interaction.followup.send(embed=embed, file=fallback_file)
+                        sent = await interaction.followup.send(embed=embed, file=fallback_file, view=EditChartView(), wait=True)
+                        if sent:
+                            session_state.setdefault("config_messages", []).append(sent)
 
                     session_state["completed"] = True
-
-                    for config_message in session_state.get("config_messages", []):
-                        try:
-                            await config_message.edit(embed=config_done_embed, view=None)
-                        except:
-                            pass
-
+                    success = True
                 except Exception as e:
-                    await interaction.followup.send(f"❌ Error rendering chart: {str(e)}", ephemeral=True)
+                    # Update edit/config messages to show the error.
+                    err_text = f"Error rendering chart: {str(e)}"
+                    error_embed = discord.Embed(color=0xF54336, description=f"{interaction.client.emotes['main']['no']} {err_text}")
+                    if not await _update_tracked_panel_messages(interaction, error_embed):
+                        await context.app_error(interaction, err_text)
+
+                # Only update config/edit messages when rendering succeeded
+                if success:
+                    await _update_tracked_panel_messages(interaction, config_done_embed)
 
         class CancelButton(discord.ui.Button):
             def __init__(self):
-                super().__init__(style=discord.ButtonStyle.danger, label="✕ Cancel", emoji="❌")
+                super().__init__(style=discord.ButtonStyle.danger, label="✕ Cancel")
             
             async def callback(self, interaction: discord.Interaction):
                 if not await _ensure_owner(interaction):
@@ -308,8 +363,14 @@ class charts(commands.Cog):
                     try:
                         if interaction.message and config_message.id == interaction.message.id:
                             continue
-                        await config_message.edit(embed=cancelled_embed, view=None)
-                    except:
+                        try:
+                            await config_message.edit(embed=cancelled_embed, view=None)
+                        except Exception:
+                            try:
+                                await interaction.followup.edit_message(config_message.id, embed=cancelled_embed, view=None)
+                            except Exception:
+                                pass
+                    except Exception:
                         pass
                 
                 # Delete the "Building..." message
@@ -321,7 +382,7 @@ class charts(commands.Cog):
 
         class EditButton(discord.ui.Button):
             def __init__(self):
-                super().__init__(style=discord.ButtonStyle.secondary, label="✏️ Edit", emoji="📝")
+                super().__init__(style=discord.ButtonStyle.secondary, label="Edit", emoji="📝")
             
             async def callback(self, interaction: discord.Interaction):
                 if not await _ensure_owner(interaction):
@@ -346,7 +407,7 @@ class charts(commands.Cog):
                         if not await _ensure_owner(select_interaction):
                             return
                         if session_state.get("cancelled"):
-                            await select_interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
+                            await context.app_error(select_interaction, "Configuration was cancelled. Start /chart_render again.")
                             return
 
                         chart_type = self.values[0]
@@ -374,21 +435,24 @@ class charts(commands.Cog):
                     description="Select chart type to reconfigure",
                     color=0x4E79A7,
                 )
-                await interaction.response.send_message(embed=embed, view=EditChartTypeView(), ephemeral=True)
+                await interaction.response.defer(ephemeral=True)
+                sent = await interaction.followup.send(embed=embed, view=EditChartTypeView(), ephemeral=True, wait=True)
+                if sent:
+                    session_state.setdefault("edit_messages", []).append(sent)
 
         class ConfigureButton(discord.ui.Button):
             def __init__(self):
-                super().__init__(style=discord.ButtonStyle.primary, label="⚙️ Configure", emoji="🛠️")
+                super().__init__(style=discord.ButtonStyle.primary, label="Configure", emoji="🛠️")
 
             async def callback(self, interaction: discord.Interaction):
                 if not await _ensure_owner(interaction):
                     return
                 if session_state.get("cancelled"):
-                    await interaction.response.send_message("❌ Configuration was cancelled. Run the command again.", ephemeral=True)
+                    await context.app_error(interaction, "Configuration was cancelled. Run the command again.")
                     return
 
                 if not fixed_chart_type:
-                    await interaction.response.send_message("❌ Missing chart preset.", ephemeral=True)
+                    await context.app_error(interaction, "Missing chart preset.")
                     return
 
                 modal = _create_modal(fixed_chart_type)
@@ -413,7 +477,7 @@ class charts(commands.Cog):
                 if not await _ensure_owner(interaction):
                     return
                 if session_state.get("cancelled"):
-                    await interaction.response.send_message("❌ Configuration was cancelled. Start /chart_render again.", ephemeral=True)
+                    await context.app_error(interaction, "Configuration was cancelled. Start /chart_render again.")
                     return
                 chart_type = self.values[0]
                 modal = _create_modal(chart_type)
@@ -452,6 +516,7 @@ class charts(commands.Cog):
             "cancelled": False,
             "completed": False,
             "config_messages": [],
+            "edit_messages": [],
             "owner_id": interaction.user.id,
             "preset_chart_type": fixed_chart_type.lower() if fixed_chart_type else None,
         }
@@ -466,19 +531,13 @@ class charts(commands.Cog):
                 self.state = state
                 self.original_msg = None
 
-            @discord.ui.button(style=discord.ButtonStyle.secondary, label="✏️ Configure", emoji="⚙️")
+            @discord.ui.button(style=discord.ButtonStyle.secondary, label="Configure", emoji="⚙️")
             async def edit_button(self, button_interaction: discord.Interaction, button: discord.ui.Button):
                 if button_interaction.user.id != self.state.get("owner_id"):
-                    await button_interaction.response.send_message(
-                        "❌ Only the command author can use this panel.",
-                        ephemeral=True,
-                    )
+                    await context.app_error(button_interaction, "Only the command author can use this panel.")
                     return
                 if self.state.get("cancelled"):
-                    await button_interaction.response.send_message(
-                        "❌ Configuration was cancelled. Run the command again.",
-                        ephemeral=True,
-                    )
+                    await context.app_error(button_interaction, "Configuration was cancelled. Run the command again.")
                     return
 
                 config_embed = discord.Embed(
@@ -512,12 +571,22 @@ class charts(commands.Cog):
                     self.state.setdefault("config_messages", []).append(config_message)
 
         preset_name = (fixed_chart_type or "chart").title()
-        building_embed = discord.Embed(
-            title=f"🔨 Building {preset_name}...",
-            description="Chart is being prepared. Click Configure to set chart options, or check your private message.",
-            color=0xFFA500,
-        )
-        building_embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+        if fixed_chart_type:
+            # Minimal embed for building when a preset is used — avoid chart details here
+            preset_name = (fixed_chart_type or "chart").title()
+            building_embed = discord.Embed(
+                title=f"🔨 Building {preset_name}...",
+                description="Chart is being prepared. Click Configure to set chart options, or check your private message.",
+                color=0x4E79A7,
+            )
+            building_embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+        else:
+            building_embed = discord.Embed(
+                title=f"🔨 Building {preset_name}...",
+                description="Chart is being prepared. Click Configure to set chart options, or check your private message.",
+                color=0xFFA500,
+            )
+            building_embed.set_footer(text=f"Requested by {interaction.user.display_name}")
 
         view = BuildingEditView(csv_file, config_file, session_state)
         await interaction.response.send_message(embed=building_embed, view=view)
@@ -606,58 +675,34 @@ class charts(commands.Cog):
     async def bar(self, ctx):
         """Render a bar chart from CSV + optional JSON config."""
         try:
-            if not ctx.message.attachments:
-                await ctx.error("Attach CSV file (and optional JSON config) to render a bar chart.")
-                return
-
-            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
-            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
-
-            if csv_attachment is None:
-                await ctx.error("CSV attachment not found.")
-                return
-
-            await self._render_chart_response(ctx, csv_attachment, json_attachment, "bar", "Bar chart rendered")
-        except Exception as error:
-            await ctx.error(str(error))
+            await ctx.warning("Please use the slash command `/bar` or `/chart_render` to run this action.")
+        except Exception:
+            try:
+                await ctx.send("Please use the slash command `/bar` or `/chart_render` to run this action.")
+            except Exception:
+                pass
 
     @commands.command(name="line", aliases=["cline"])
     async def line(self, ctx):
         """Render a line chart from CSV + optional JSON config."""
         try:
-            if not ctx.message.attachments:
-                await ctx.error("Attach CSV file (and optional JSON config) to render a line chart.")
-                return
-
-            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
-            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
-
-            if csv_attachment is None:
-                await ctx.error("CSV attachment not found.")
-                return
-
-            await self._render_chart_response(ctx, csv_attachment, json_attachment, "line", "Line chart rendered")
-        except Exception as error:
-            await ctx.error(str(error))
+            await ctx.warning("Please use the slash command `/line` or `/chart_render` to run this action.")
+        except Exception:
+            try:
+                await ctx.send("Please use the slash command `/line` or `/chart_render` to run this action.")
+            except Exception:
+                pass
 
     @commands.command(name="pie", aliases=["cpie"])
     async def pie(self, ctx):
         """Render a pie chart from CSV + optional JSON config."""
         try:
-            if not ctx.message.attachments:
-                await ctx.error("Attach CSV file (and optional JSON config) to render a pie chart.")
-                return
-
-            csv_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".csv")), None)
-            json_attachment = next((a for a in ctx.message.attachments if a.filename.lower().endswith(".json")), None)
-
-            if csv_attachment is None:
-                await ctx.error("CSV attachment not found.")
-                return
-
-            await self._render_chart_response(ctx, csv_attachment, json_attachment, "pie", "Pie chart rendered")
-        except Exception as error:
-            await ctx.error(str(error))
+            await ctx.warning("Please use the slash command `/pie` or `/chart_render` to run this action.")
+        except Exception:
+            try:
+                await ctx.send("Please use the slash command `/pie` or `/chart_render` to run this action.")
+            except Exception:
+                pass
 
     @app_commands.command(name="chart_render", description="Render a chart from CSV and optional JSON config")
     @app_commands.allowed_installs(guilds=True, users=True)
@@ -670,101 +715,7 @@ class charts(commands.Cog):
     ):
         try:
             if config_file is None:
-                session_state = {
-                    "cancelled": False,
-                    "config_messages": [],
-                    "owner_id": interaction.user.id,
-                }
-
-                # Create a view with Edit button for Building message
-                cog = self
-                
-                class BuildingEditView(discord.ui.View):
-                    def __init__(self, csv_attachment, cfg_file, state: dict):
-                        super().__init__(timeout=300)
-                        self.csv_file = csv_attachment
-                        self.config_file = cfg_file
-                        self.state = state
-                        self.original_msg = None
-                    
-                    @discord.ui.button(style=discord.ButtonStyle.secondary, label="✏️ Configure", emoji="⚙️")
-                    async def edit_button(self, button_interaction: discord.Interaction, button: discord.ui.Button):
-                        if button_interaction.user.id != self.state.get("owner_id"):
-                            await button_interaction.response.send_message(
-                                "❌ Only the command author can use this panel.",
-                                ephemeral=True,
-                            )
-                            return
-                        if self.state.get("cancelled"):
-                            await button_interaction.response.send_message(
-                                "❌ Configuration was cancelled. Run /chart_render again.",
-                                ephemeral=True,
-                            )
-                            return
-
-                        # Show the chart type selector again
-                        config_embed = discord.Embed(
-                            title="📊 Chart Wizard",
-                            description="Select chart type and configure it in the next step",
-                            color=0x4E79A7,
-                        )
-                        config_embed.add_field(
-                            name="⏱️ Timeout",
-                            value="Configuration window closes in 5 minutes. If no selection is made, the build message will be deleted.",
-                            inline=False,
-                        )
-                        await button_interaction.response.defer(ephemeral=True)
-                        config_message = await button_interaction.followup.send(
-                            embed=config_embed,
-                            view=cog._chart_type_select_view(
-                                self.csv_file,
-                                self.config_file,
-                                self.original_msg,
-                                session_state=self.state,
-                            ),
-                            ephemeral=True,
-                            wait=True,
-                        )
-                        if config_message:
-                            self.state.setdefault("config_messages", []).append(config_message)
-                
-                # Send public "Building chart..." message
-                building_embed = discord.Embed(
-                    title="🔨 Building chart...",
-                    description="Chart is being prepared. Click Configure to set chart options, or check your private message.",
-                    color=0xFFA500,
-                )
-                building_embed.set_footer(text=f"Requested by {interaction.user.display_name}")
-                
-                view = BuildingEditView(csv_file, config_file, session_state)
-                await interaction.response.send_message(embed=building_embed, view=view)
-                original_message = await interaction.original_response()
-                view.original_msg = original_message
-                
-                # Send ephemeral message with chart type selector (visible only to author)
-                config_embed = discord.Embed(
-                    title="📊 Chart Wizard",
-                    description="Select chart type and configure it in the next step",
-                    color=0x4E79A7,
-                )
-                config_embed.add_field(
-                    name="⏱️ Timeout",
-                    value="Configuration window closes in 5 minutes. If no selection is made, the build message will be deleted.",
-                    inline=False,
-                )
-                config_message = await interaction.followup.send(
-                    embed=config_embed,
-                    view=self._chart_type_select_view(
-                        csv_file,
-                        config_file,
-                        original_message,
-                        session_state=session_state,
-                    ),
-                    ephemeral=True,
-                    wait=True,
-                )
-                if config_message:
-                    session_state.setdefault("config_messages", []).append(config_message)
+                await self._start_chart_configuration(interaction, csv_file, config_file)
                 return
 
             await self._render_chart_slash_response(

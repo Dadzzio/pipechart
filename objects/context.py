@@ -70,6 +70,12 @@ class context(commands.Context):
         embed = Embed(color=0x37EC2A, description=f"{self.bot.emotes['main']['yes']} {content}")
         if reply is True: await super().reply(embed=embed)
         else: await super().channel.send(embed=embed)
+        
+    #WARNING
+    async def warning(self, content, reply: bool=True) -> Message:
+        embed = Embed(color=0xFFFF00, description=f"{self.bot.emotes['main']['warning']} {content}")
+        if reply is True: await super().reply(embed=embed)
+        else: await super().channel.send(embed=embed)
 
     @staticmethod
     def chart_embed(

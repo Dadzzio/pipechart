@@ -22,7 +22,11 @@ def parse_config(config_raw: str | None) -> dict:
     if not config_raw:
         return base
 
-    user = json.loads(config_raw)
+    try:
+        user = json.loads(config_raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON decode error: {exc}") from None
+
     base.update(user)
     base["chart_type"] = str(base["chart_type"]).lower()
     base["output"] = str(base["output"]).lower()
