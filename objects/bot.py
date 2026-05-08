@@ -2,12 +2,13 @@ from typing import Literal
 
 from discord.ext import commands
 from objects.context import context
-from discord import Intents, AllowedMentions;
-from dotenv import load_dotenv;
-from datetime import datetime;
-import os, json;
-emojisFile = open('./configs/emojis.json')
+from discord import Intents, AllowedMentions
+from dotenv import load_dotenv
+from datetime import datetime
+import os, json
+
 load_dotenv()
+
 class Pipechart(commands.Bot):
     def __init__(self):
         self._prefix = self._get_prefix()
@@ -20,7 +21,34 @@ class Pipechart(commands.Bot):
             help_command=None
         )
         self.readyAt = datetime.timestamp(datetime.now())
-        self.emotes = json.load(emojisFile)
+        # Load emojis config. If BETA=true in .env, prefer emojis-beta.json, fallback to emojis.json.
+        try:
+            beta_flag = os.getenv("BETA", os.getenv("beta", "")).strip().lower()
+            use_beta = beta_flag in ("1", "true", "yes")
+        except Exception:
+            use_beta = False
+
+        emojis_path = None
+        if use_beta:
+            candidate = os.path.join("./configs", "emojis-beta.json")
+            if os.path.exists(candidate):
+                emojis_path = candidate
+
+        if not emojis_path:
+            emojis_path = os.path.join("./configs", "emojis.json")
+
+        try:
+            with open(emojis_path, "r", encoding="utf-8") as f:
+                self.emotes = json.load(f)
+        except Exception:
+            # Fallback to an empty dict to avoid attribute errors elsewhere
+            self.emotes = {
+                "main": {
+                    "no": "",
+                    "yes": "",
+                    "warning": ""
+                }
+            }
     @property
     def prefix(self) -> str:
         return self._prefix
@@ -41,10 +69,10 @@ class Pipechart(commands.Bot):
         prefix = (
             os.getenv("PREFIX")
             or os.getenv("BOT_PREFIX")
-            or "\\\\"
+            or "\\"
         )
         prefix = prefix.strip().strip('"').strip("'")
-        return prefix or "\\\\"
+        return prefix or "\\"
 
     def _get_token(self) -> str:
         token = (

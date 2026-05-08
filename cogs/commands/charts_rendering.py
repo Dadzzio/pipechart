@@ -12,7 +12,11 @@ def build_chart(cfg: dict, labels: list[str], values: list[float]) -> bytes:
     elif chart_type == "line":
         ax.plot(labels, values, marker="o", color=cfg["color"])
     elif chart_type == "pie":
-        ax.pie(values, labels=labels, autopct="%.1f%%")
+        pie_colors = cfg.get("colors")
+        if pie_colors:
+            ax.pie(values, labels=labels, autopct="%.1f%%", colors=pie_colors)
+        else:
+            ax.pie(values, labels=labels, autopct="%.1f%%")
         ax.axis("equal")
 
     ax.set_title(cfg.get("title") or "PipeChart")
