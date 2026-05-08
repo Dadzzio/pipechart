@@ -18,6 +18,7 @@ The first version focuses on one chart type and one output format, with room to 
 ## Requirements
 
 - Discord bot token configured in `.env`
+- Optional `beta=true` flag in `.env` for beta presence and startup mode
 - Python 3.14
 - `discord.py` and `matplotlib` installed (see `requirements.txt`)
 - CSV dataset input; optional JSON config
