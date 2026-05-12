@@ -4,33 +4,19 @@ import json
 
 import discord
 
+from cogs.commands.charts_specs import CHART_SPECS, normalize_config
+
 
 def parse_config(config_raw: str | None) -> dict:
-    base = {
-        "chart_type": "bar",
-        "x_column": None,
-        "y_column": None,
-        "title": "PipeChart",
-        "x_label": "",
-        "y_label": "",
-        "color": "#4E79A7",
-        "output": "png",
-        "figsize": [8, 5],
-        "dpi": 150,
-    }
-
     if not config_raw:
-        return base
+        return normalize_config(None)
 
     try:
         user = json.loads(config_raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON decode error: {exc}") from None
 
-    base.update(user)
-    base["chart_type"] = str(base["chart_type"]).lower()
-    base["output"] = str(base["output"]).lower()
-    return base
+    return normalize_config(user)
 
 
 def force_chart_type(cfg: dict, chart_type: str) -> dict:
@@ -88,17 +74,10 @@ def extract_series(rows: list[dict], x_col: str, y_col: str) -> tuple[list[str],
 
 
 def validate_for_chart(chart_type: str, values: list[float]):
-    if chart_type not in {"bar", "line", "pie"}:
+    spec = CHART_SPECS.get(chart_type)
+    if not spec:
         raise ValueError("Unsupported chart_type. Use one of: bar, line, pie.")
-
-    if len(values) < 2:
-        raise ValueError("At least two rows are required.")
-
-    if chart_type == "pie":
-        if any(v < 0 for v in values):
-            raise ValueError("Pie chart does not support negative values.")
-        if sum(values) <= 0:
-            raise ValueError("Pie chart requires values with positive total sum.")
+    spec.validate(values)
 
 
 async def read_attachment_text(attachment: discord.Attachment) -> str:
