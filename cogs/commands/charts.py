@@ -20,6 +20,247 @@ class charts(commands.Cog):
         filename = f"pipechart.{cfg['output']}"
         return discord.File(io.BytesIO(chart_bytes), filename=filename)
 
+    def _create_edit_view(
+        self,
+        session_state: dict,
+        csv_file: discord.Attachment | None = None,
+        config_file: discord.Attachment | None = None,
+        fixed_chart_type: str | None = None,
+    ) -> discord.ui.View:
+        """Create an EditChartView for direct-render messages (with JSON config)."""
+        cog = self
+
+        class SimpleEditButton(discord.ui.Button):
+            def __init__(self):
+                super().__init__(style=discord.ButtonStyle.secondary, label="Edit", emoji="📝")
+
+            async def callback(self, interaction: discord.Interaction):
+                owner_id = session_state.get("owner_id")
+                if owner_id and interaction.user.id != owner_id:
+                    await context.app_error(interaction, "Only the command author can use this panel.")
+                    return
+                if session_state.get("cancelled"):
+                    await context.app_error(interaction, "Configuration was cancelled. Start /chart_render again.")
+                    return
+
+                # Open edit panel (modal directly for fixed_chart_type)
+                if not fixed_chart_type or not csv_file:
+                    await context.app_error(interaction, "Configuration data missing. Start /chart_render again.")
+                    return
+
+                # Helper to ensure owner
+                async def _ensure_owner_edit(check_interaction: discord.Interaction) -> bool:
+                    if owner_id is None or check_interaction.user.id == owner_id:
+                        return True
+                    await context.app_error(check_interaction, "Only the command author can use this panel.")
+                    return False
+
+                def _create_modal_edit(chart_type: str):
+                    return cog._create_pie_modal_edit() if chart_type == "pie" else cog._create_config_modal_edit(chart_type)
+
+                # Create and open the modal directly (since fixed_chart_type is known)
+                if fixed_chart_type == "pie":
+                    class PieConfigModalEdit(discord.ui.Modal, title="Re-configure Pie Chart"):
+                        title_input = discord.ui.TextInput(
+                            label="Chart Title",
+                            placeholder="Enter chart title",
+                            max_length=100,
+                            required=False,
+                            default="PipeChart"
+                        )
+                        colors_input = discord.ui.TextInput(
+                            label="Slice colors (comma-separated)",
+                            placeholder="red, #4E79A7, 0.6, C2",
+                            max_length=250,
+                            required=False
+                        )
+                        output_input = discord.ui.TextInput(
+                            label="Output Format (png/svg/pdf)",
+                            placeholder="png, svg, or pdf",
+                            max_length=3,
+                            required=False,
+                            default="png"
+                        )
+
+                        async def on_submit(modal_interaction: discord.Interaction):
+                            if not await _ensure_owner_edit(modal_interaction):
+                                return
+                            await modal_interaction.response.defer()
+
+                            try:
+                                cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
+                                    csv_file,
+                                    config_file,
+                                    chart_type="pie",
+                                )
+
+                                if self.title_input.value:
+                                    cfg["title"] = self.title_input.value
+
+                                output_fmt = (self.output_input.value or "png").lower().strip()
+                                output_fmt = output_fmt if output_fmt in ["png", "svg", "pdf"] else "png"
+                                cfg["output"] = output_fmt
+
+                                parsed_colors = []
+                                invalid_colors = []
+                                if self.colors_input.value:
+                                    parsed_colors = [c.strip() for c in self.colors_input.value.split(",") if c.strip()]
+                                    for c in parsed_colors:
+                                        if not mcolors.is_color_like(c):
+                                            invalid_colors.append(c)
+                                    if invalid_colors:
+                                        err_text = f"Invalid color(s): {', '.join(invalid_colors)}. Use color names or hex like '#4E79A7'."
+                                        await context.app_error(modal_interaction, err_text)
+                                        return
+                                    if parsed_colors:
+                                        cfg["colors"] = parsed_colors
+
+                                file = cog._build_chart_file(cfg, labels, values)
+                                embed = context.chart_embed(
+                                    chart_type=cfg['chart_type'],
+                                    rows_count=len(rows),
+                                    user_name=modal_interaction.user.display_name,
+                                    user_avatar=modal_interaction.user.display_avatar,
+                                    config=cfg,
+                                )
+
+                                success_embed = discord.Embed(
+                                    title="✅ Chart updated!",
+                                    description="Chart has been re-rendered with your new settings.",
+                                    color=0x37EC2A,
+                                )
+
+                                # Update original message with new chart (create fresh file for each edit)
+                                combined = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                                for msg in combined:
+                                    try:
+                                        fresh_file = cog._build_chart_file(cfg, labels, values)
+                                        await msg.edit(embed=embed, attachments=[fresh_file])
+                                    except Exception:
+                                        try:
+                                            fresh_file = cog._build_chart_file(cfg, labels, values)
+                                            await modal_interaction.followup.edit_message(msg.id, embed=embed, attachments=[fresh_file])
+                                        except Exception:
+                                            pass
+
+                                await modal_interaction.followup.send(embed=success_embed, ephemeral=True)
+                            except Exception as e:
+                                await context.app_error(modal_interaction, f"Error re-rendering chart: {str(e)}")
+
+                    modal = PieConfigModalEdit()
+                else:
+                    class ConfigModalEdit(discord.ui.Modal, title="Re-configure Chart"):
+                        title_input = discord.ui.TextInput(
+                            label="Chart Title",
+                            placeholder="Enter chart title",
+                            max_length=100,
+                            required=False,
+                            default="PipeChart"
+                        )
+                        x_label_input = discord.ui.TextInput(
+                            label="X Axis Label",
+                            placeholder="Leave empty for default",
+                            max_length=100,
+                            required=False
+                        )
+                        y_label_input = discord.ui.TextInput(
+                            label="Y Axis Label",
+                            placeholder="Leave empty for default",
+                            max_length=100,
+                            required=False
+                        )
+                        color_input = discord.ui.TextInput(
+                            label="Color (any matplotlib value)",
+                            placeholder="#4E79A7, red, 0.5",
+                            max_length=50,
+                            required=False,
+                            default="#4E79A7"
+                        )
+                        output_input = discord.ui.TextInput(
+                            label="Output Format (png/svg/pdf)",
+                            placeholder="png, svg, or pdf",
+                            max_length=3,
+                            required=False,
+                            default="png"
+                        )
+
+                        async def on_submit(modal_interaction: discord.Interaction):
+                            if not await _ensure_owner_edit(modal_interaction):
+                                return
+                            await modal_interaction.response.defer()
+
+                            try:
+                                cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
+                                    csv_file,
+                                    config_file,
+                                    chart_type=fixed_chart_type,
+                                )
+
+                                if self.title_input.value:
+                                    cfg["title"] = self.title_input.value
+                                if self.x_label_input.value:
+                                    cfg["x_label"] = self.x_label_input.value
+                                if self.y_label_input.value:
+                                    cfg["y_label"] = self.y_label_input.value
+
+                                if self.color_input.value:
+                                    val = self.color_input.value.strip()
+                                    if not mcolors.is_color_like(val):
+                                        await context.app_error(modal_interaction, f"Invalid color value: {val}")
+                                        return
+                                    cfg["color"] = val
+
+                                output_fmt = (self.output_input.value or "png").lower().strip()
+                                output_fmt = output_fmt if output_fmt in ["png", "svg", "pdf"] else "png"
+                                cfg["output"] = output_fmt
+
+                                file = cog._build_chart_file(cfg, labels, values)
+                                embed = context.chart_embed(
+                                    chart_type=cfg['chart_type'],
+                                    rows_count=len(rows),
+                                    user_name=modal_interaction.user.display_name,
+                                    user_avatar=modal_interaction.user.display_avatar,
+                                    config=cfg,
+                                )
+
+                                success_embed = discord.Embed(
+                                    title="✅ Chart updated!",
+                                    description="Chart has been re-rendered with your new settings.",
+                                    color=0x37EC2A,
+                                )
+
+                                # Update original message with new chart (create fresh file for each edit)
+                                combined = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                                for msg in combined:
+                                    try:
+                                        fresh_file = cog._build_chart_file(cfg, labels, values)
+                                        await msg.edit(embed=embed, attachments=[fresh_file])
+                                    except Exception:
+                                        try:
+                                            fresh_file = cog._build_chart_file(cfg, labels, values)
+                                            await modal_interaction.followup.edit_message(msg.id, embed=embed, attachments=[fresh_file])
+                                        except Exception:
+                                            pass
+
+                                await modal_interaction.followup.send(embed=success_embed, ephemeral=True)
+                            except Exception as e:
+                                await context.app_error(modal_interaction, f"Error re-rendering chart: {str(e)}")
+
+                    modal = ConfigModalEdit()
+
+                await interaction.response.send_modal(modal)
+
+        class SimpleEditChartView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=300)
+                self.add_item(SimpleEditButton())
+
+            async def on_timeout(self):
+                """Remove the Edit button when timeout occurs"""
+                self.clear_items()
+
+        return SimpleEditChartView()
+
     def _chart_type_select_view(
         self,
         csv_file: discord.Attachment,
@@ -429,6 +670,24 @@ class charts(commands.Cog):
                     def __init__(self):
                         super().__init__(timeout=300)
                         self.add_item(EditChartTypeSelect())
+
+                    async def on_timeout(self):
+                        """Update the edit panel message when timeout occurs"""
+                        timeout_embed = discord.Embed(
+                            title="⏱️ Session Expired",
+                            description="The configuration panel has expired. Please run `/chart_render` again to start a new session.",
+                            color=0xF59E0B,
+                        )
+                        try:
+                            # Try to update all tracked edit_messages with the timeout embed
+                            combined = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                            for msg in combined:
+                                try:
+                                    await msg.edit(embed=timeout_embed, view=None)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                 
                 embed = discord.Embed(
                     title="📊 Edit Chart",
@@ -461,8 +720,13 @@ class charts(commands.Cog):
 
         class EditChartView(discord.ui.View):
             def __init__(self):
-                super().__init__()
+                super().__init__(timeout=300)
                 self.add_item(EditButton())
+
+            async def on_timeout(self):
+                """Remove the Edit button when timeout occurs"""
+                # Clear all children (buttons) from the view
+                self.clear_items()
 
         class ChartTypeSelect(discord.ui.Select):
             def __init__(self):
@@ -654,6 +918,8 @@ class charts(commands.Cog):
         config_file: discord.Attachment | None,
         chart_type: str | None = None,
         title: str | None = None,
+        include_edit_view: bool = False,
+        session_state: dict | None = None,
     ):
         cfg, rows, _columns, _x_col, _y_col, labels, values = await prepare_chart_data(
             csv_file,
@@ -669,8 +935,161 @@ class charts(commands.Cog):
             user_avatar=interaction.user.display_avatar,
             config=cfg,
         )
-        await interaction.response.send_message(embed=embed, file=file)
+        
+        view = None
+        if include_edit_view and session_state:
+            view = self._create_edit_view(
+                session_state,
+                csv_file=csv_file,
+                config_file=config_file,
+                fixed_chart_type=chart_type,
+            )
+        
+        await interaction.response.send_message(embed=embed, file=file, view=view)
 
+    @app_commands.command(name="chart_render", description="Render a chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def chart_render_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            if config_file is None:
+                # No JSON config — open interactive panel
+                await self._start_chart_configuration(interaction, csv_file, config_file)
+                return
+
+            # JSON config provided — render directly with Edit button
+            session_state = {
+                "cancelled": False,
+                "completed": True,
+                "config_messages": [],
+                "edit_messages": [],
+                "owner_id": interaction.user.id,
+                "preset_chart_type": None,
+            }
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                title="Chart rendered",
+                include_edit_view=True,
+                session_state=session_state,
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="bar", description="Render a bar chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def bar_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="bar")
+                return
+
+            # JSON config provided — render directly with Edit button
+            session_state = {
+                "cancelled": False,
+                "completed": True,
+                "config_messages": [],
+                "edit_messages": [],
+                "owner_id": interaction.user.id,
+                "preset_chart_type": "bar",
+            }
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="bar",
+                title="Bar chart rendered",
+                include_edit_view=True,
+                session_state=session_state,
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="line", description="Render a line chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def line_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="line")
+                return
+
+            # JSON config provided — render directly with Edit button
+            session_state = {
+                "cancelled": False,
+                "completed": True,
+                "config_messages": [],
+                "edit_messages": [],
+                "owner_id": interaction.user.id,
+                "preset_chart_type": "line",
+            }
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="line",
+                title="Line chart rendered",
+                include_edit_view=True,
+                session_state=session_state,
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+
+    @app_commands.command(name="pie", description="Render a pie chart from CSV and optional JSON config")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def pie_slash(
+        self,
+        interaction: discord.Interaction,
+        csv_file: discord.Attachment,
+        config_file: discord.Attachment | None = None,
+    ):
+        try:
+            if config_file is None:
+                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="pie")
+                return
+
+            # JSON config provided — render directly with Edit button
+            session_state = {
+                "cancelled": False,
+                "completed": True,
+                "config_messages": [],
+                "edit_messages": [],
+                "owner_id": interaction.user.id,
+                "preset_chart_type": "pie",
+            }
+            await self._render_chart_slash_response(
+                interaction,
+                csv_file,
+                config_file,
+                chart_type="pie",
+                title="Pie chart rendered",
+                include_edit_view=True,
+                session_state=session_state,
+            )
+        except Exception as error:
+            await context.app_error(interaction, str(error))
+    
+    
+    
+    
     @commands.command(name="chart_render", aliases=["render"])
     async def chart_render(self, ctx):
         """Render a chart from CSV + optional JSON config."""
@@ -714,101 +1133,6 @@ class charts(commands.Cog):
                 await ctx.send("Please use the slash command `/pie` or `/chart_render` to run this action.")
             except Exception:
                 pass
-
-    @app_commands.command(name="chart_render", description="Render a chart from CSV and optional JSON config")
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def chart_render_slash(
-        self,
-        interaction: discord.Interaction,
-        csv_file: discord.Attachment,
-        config_file: discord.Attachment | None = None,
-    ):
-        try:
-            if config_file is None:
-                await self._start_chart_configuration(interaction, csv_file, config_file)
-                return
-
-            await self._render_chart_slash_response(
-                interaction,
-                csv_file,
-                config_file,
-                title="Chart rendered",
-            )
-        except Exception as error:
-            await context.app_error(interaction, str(error))
-
-    @app_commands.command(name="bar", description="Render a bar chart from CSV and optional JSON config")
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def bar_slash(
-        self,
-        interaction: discord.Interaction,
-        csv_file: discord.Attachment,
-        config_file: discord.Attachment | None = None,
-    ):
-        try:
-            if config_file is None:
-                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="bar")
-                return
-
-            await self._render_chart_slash_response(
-                interaction,
-                csv_file,
-                config_file,
-                chart_type="bar",
-                title="Bar chart rendered",
-            )
-        except Exception as error:
-            await context.app_error(interaction, str(error))
-
-    @app_commands.command(name="line", description="Render a line chart from CSV and optional JSON config")
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def line_slash(
-        self,
-        interaction: discord.Interaction,
-        csv_file: discord.Attachment,
-        config_file: discord.Attachment | None = None,
-    ):
-        try:
-            if config_file is None:
-                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="line")
-                return
-
-            await self._render_chart_slash_response(
-                interaction,
-                csv_file,
-                config_file,
-                chart_type="line",
-                title="Line chart rendered",
-            )
-        except Exception as error:
-            await context.app_error(interaction, str(error))
-
-    @app_commands.command(name="pie", description="Render a pie chart from CSV and optional JSON config")
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def pie_slash(
-        self,
-        interaction: discord.Interaction,
-        csv_file: discord.Attachment,
-        config_file: discord.Attachment | None = None,
-    ):
-        try:
-            if config_file is None:
-                await self._start_chart_configuration(interaction, csv_file, config_file, fixed_chart_type="pie")
-                return
-
-            await self._render_chart_slash_response(
-                interaction,
-                csv_file,
-                config_file,
-                chart_type="pie",
-                title="Pie chart rendered",
-            )
-        except Exception as error:
-            await context.app_error(interaction, str(error))
 
 
 async def setup(bot):
