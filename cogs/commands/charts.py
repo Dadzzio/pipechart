@@ -588,7 +588,7 @@ class charts(commands.Cog):
             if session_state.get("defer_render"):
                 session_state["pending_config"] = dict(cfg)
                 
-                await context.app_ok(interaction, "Main settings saved. Click `Render chart` button to render the chart with your settings.", ephemeral=True)
+                await context.app_ok(interaction, "Main settings saved.", ephemeral=True)
                 return
 
             embed = context.chart_embed(
@@ -807,23 +807,66 @@ class charts(commands.Cog):
                 super().__init__(style=discord.ButtonStyle.danger, label="Delete", emoji="🗑️")
 
             async def callback(self, interaction: discord.Interaction):
-                """Delete the original message."""
+                """Prompt for confirmation before deleting."""
                 if not await cog._ensure_owner(interaction, session_state):
                     return
-                session_state["cancelled"] = True
+
+                class ConfirmDeleteView(discord.ui.View):
+                    def __init__(self):
+                        super().__init__(timeout=60)
+                        self.message = None
+
+                    @discord.ui.button(label="Yes, delete", style=discord.ButtonStyle.danger, emoji="🗑️")
+                    async def confirm(self, confirm_interaction: discord.Interaction, button: discord.ui.Button):
+                        session_state["cancelled"] = True
+                        try:
+                            if original_message:
+                                await original_message.delete()
+                        except Exception:
+                            pass
+                        
+                        combined_panels = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                        for panel_msg in combined_panels:
+                            try:
+                                await panel_msg.delete()
+                            except Exception:
+                                pass
+                                
+                        if self.message: 
+                            try:
+                                await self.message.delete()
+                            except Exception:
+                                pass
+
+                    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+                    async def cancel(self, cancel_interaction: discord.Interaction, button: discord.ui.Button):
+                        await cancel_interaction.response.edit_message(
+                            content="Deletion cancelled.",
+                            embed=None,
+                            view=None
+                        )
+
+                    async def on_timeout(self):
+                        for item in self.children:
+                            item.disabled = True
+                        if self.message:
+                            try:
+                                await self.message.edit(content="⏱️ Confirmation timed out.", view=self, embed=None)
+                            except Exception:
+                                pass
+
+                confirm_embed = discord.Embed(
+                    title="🗑️ Are you sure?",
+                    description="This will permanently delete the chart message and close all configuration panels.",
+                    color=0xF54336
+                )
+                
+                view = ConfirmDeleteView()
+                await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
                 try:
-                    if original_message:
-                        await original_message.delete()
+                    view.message = await interaction.original_response()
                 except Exception:
                     pass
-                combined_panels = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
-                for panel_msg in combined_panels:
-                    try:
-                        await panel_msg.delete()
-                    except Exception:
-                        pass
-                if not interaction.response.is_done():
-                    await interaction.response.defer()
 
         class MainSettingsButton(discord.ui.Button):
             def __init__(self):
@@ -1037,7 +1080,7 @@ class charts(commands.Cog):
         class EditChartView(discord.ui.View):
             def __init__(self):
                 """Initialize the chart message view container."""
-                super().__init__(timeout=300)
+                super().__init__(timeout=None)
                 self.add_item(EditButton())
 
             async def on_timeout(self):
@@ -1098,7 +1141,7 @@ class charts(commands.Cog):
 
                 cancelled_embed = discord.Embed(
                     title="❌ Configuration cancelled",
-                    description="This configuration panel is locked. Run /chart_render again to start a new one.",
+                    description="This configuration panel is locked. Run `/chart_render` again to start a new one.",
                     color=0xF54336,
                 )
                 await interaction.response.edit_message(embed=cancelled_embed, view=self.view)
