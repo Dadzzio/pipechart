@@ -46,6 +46,8 @@ class dev(commands.Cog):
     async def restart(self, ctx):
         try:
             for dir in os.listdir('./cogs'):
+                if not os.path.isdir(f'./cogs/{dir}'):
+                    continue
                 for file in os.listdir(f'./cogs/{dir}'):
                     if file.endswith('.py') and not file.endswith('dev.py'):
                         extension = f"cogs.{dir}.{file[:-3]}"

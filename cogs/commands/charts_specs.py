@@ -95,7 +95,7 @@ DEFAULT_CONFIG = {
     "figsize": [8, 5],
     "dpi": 150,
     "grid": True,
-    "style": "",
+    "style": "seaborn-v0_8",
     "line_width": 2.0,
     "marker": "o",
     "bar_width": 0.8,
