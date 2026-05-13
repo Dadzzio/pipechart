@@ -42,6 +42,7 @@ class charts(commands.Cog):
             "defer_render": True,
             "config_messages": [],
             "edit_messages": [],
+            "advanced_messages": [],
             "config_history": [],
             "data_cache": {},
             "render_cache": {},
@@ -174,6 +175,9 @@ class charts(commands.Cog):
             "grid": cfg.get("grid", True),
             "style": cfg.get("style", ""),
             "line_width": cfg.get("line_width", 2.0),
+            "mean_line": cfg.get("mean_line", False),
+            "mean_color": cfg.get("mean_color", "red"),
+            "mean_style": cfg.get("mean_style", "solid"),
         })
 
     def _apply_advanced_config(self, cfg: dict, session_state: dict) -> dict:
@@ -185,66 +189,171 @@ class charts(commands.Cog):
         merged.update(advanced)
         return normalize_config(merged)
 
-    def _create_advanced_modal(self, session_state: dict) -> discord.ui.Modal:
-        """Create a modal to edit advanced matplotlib options."""
+    def _create_advanced_topic_select(self, session_state: dict) -> discord.ui.Select:
+        """Create a Select for choosing a single advanced topic to configure."""
+        cog = self
+
+        class AdvancedTopicSelect(discord.ui.Select):
+            def __init__(self):
+                """Initialize the advanced topic selector."""
+                super().__init__(
+                    placeholder="Select topics to configure",
+                    min_values=1,
+                    max_values=1,
+                    options=[
+                        discord.SelectOption(label="Mean Line", value="mean_line", emoji="📊"),
+                        discord.SelectOption(label="DPI", value="dpi", emoji="🖨️"),
+                        discord.SelectOption(label="Grid", value="grid", emoji="📐"),
+                        discord.SelectOption(label="Style", value="style", emoji="🎨"),
+                        discord.SelectOption(label="Line Width", value="line_width", emoji="📏"),
+                        discord.SelectOption(label="Figure Size", value="figsize", emoji="📦"),
+                    ],
+                )
+
+            async def callback(self, interaction: discord.Interaction):
+                """Open modal for the first selected topic."""
+                selected_topics = self.values
+                if not selected_topics:
+                    return
+
+                first_topic = selected_topics[0]
+                modal = cog._create_topic_modal(first_topic, session_state)
+                await interaction.response.send_modal(modal)
+
+        return AdvancedTopicSelect()
+
+    def _create_topic_modal(self, topic: str, session_state: dict) -> discord.ui.Modal:
+        """Create a modal for a specific advanced topic."""
         defaults = session_state.get("advanced_config", {})
 
-        def _stringify_figsize(value) -> str:
-            if isinstance(value, (list, tuple)) and len(value) == 2:
-                return f"{value[0]}, {value[1]}"
-            return "8, 5"
+        if topic == "mean_line":
+            class MeanLineModal(discord.ui.Modal, title="Mean Line Config"):
+                enabled_input = discord.ui.TextInput(
+                    label="Enable mean line (true/false)",
+                    placeholder="false",
+                    required=False,
+                    default=str(defaults.get("mean_line", False)).lower(),
+                )
+                color_input = discord.ui.TextInput(
+                    label="Line color (matplotlib)",
+                    placeholder="red",
+                    required=False,
+                    default=str(defaults.get("mean_color", "red")),
+                )
+                style_input = discord.ui.TextInput(
+                    label="Line style (solid/dotted/dashed)",
+                    placeholder="solid",
+                    required=False,
+                    default=str(defaults.get("mean_style", "solid")),
+                )
 
-        class AdvancedModal(discord.ui.Modal, title="Advanced Options"):
-            dpi_input = discord.ui.TextInput(
-                label="DPI",
-                placeholder="150",
-                required=False,
-                default=str(defaults.get("dpi", 150)),
-            )
-            figsize_input = discord.ui.TextInput(
-                label="Figure size (width, height)",
-                placeholder="8, 5",
-                required=False,
-                default=_stringify_figsize(defaults.get("figsize", [8, 5])),
-            )
-            grid_input = discord.ui.TextInput(
-                label="Grid (true/false)",
-                placeholder="true",
-                required=False,
-                default=str(defaults.get("grid", True)).lower(),
-            )
-            style_input = discord.ui.TextInput(
-                label="Matplotlib style",
-                placeholder="", 
-                required=False,
-                default=str(defaults.get("style", "")),
-            )
-            line_width_input = discord.ui.TextInput(
-                label="Line width",
-                placeholder="2.0",
-                required=False,
-                default=str(defaults.get("line_width", 2.0)),
-            )
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {
+                        "mean_line": self.enabled_input.value,
+                        "mean_color": self.color_input.value,
+                        "mean_style": self.style_input.value,
+                    }
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {}).update({
+                        "mean_line": normalized.get("mean_line", False),
+                        "mean_color": normalized.get("mean_color", "red"),
+                        "mean_style": normalized.get("mean_style", "solid"),
+                    })
+                    await context.app_ok(modal_interaction, "Mean line saved.", ephemeral=True)
 
-            async def on_submit(self, interaction: discord.Interaction):
-                raw_cfg = {
-                    "dpi": self.dpi_input.value,
-                    "figsize": self.figsize_input.value,
-                    "grid": self.grid_input.value,
-                    "style": self.style_input.value,
-                    "line_width": self.line_width_input.value,
-                }
-                normalized = normalize_config(raw_cfg)
-                session_state["advanced_config"] = {
-                    "dpi": normalized.get("dpi"),
-                    "figsize": normalized.get("figsize"),
-                    "grid": normalized.get("grid", True),
-                    "style": normalized.get("style", ""),
-                    "line_width": normalized.get("line_width", 2.0),
-                }
-                await context.app_ok(interaction, "Advanced options saved.", ephemeral=True)
+            return MeanLineModal()
 
-        return AdvancedModal()
+        elif topic == "dpi":
+            class DPIModal(discord.ui.Modal, title="DPI Settings"):
+                dpi_input = discord.ui.TextInput(
+                    label="DPI (resolution)",
+                    placeholder="150",
+                    required=False,
+                    default=str(defaults.get("dpi", 150)),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"dpi": self.dpi_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["dpi"] = normalized.get("dpi", 150)
+                    await context.app_ok(modal_interaction, "DPI saved.", ephemeral=True)
+
+            return DPIModal()
+
+        elif topic == "grid":
+            class GridModal(discord.ui.Modal, title="Grid Settings"):
+                grid_input = discord.ui.TextInput(
+                    label="Enable grid (true/false)",
+                    placeholder="true",
+                    required=False,
+                    default=str(defaults.get("grid", True)).lower(),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"grid": self.grid_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["grid"] = normalized.get("grid", True)
+                    await context.app_ok(modal_interaction, "Grid saved.", ephemeral=True)
+
+            return GridModal()
+
+        elif topic == "style":
+            class StyleModal(discord.ui.Modal, title="Matplotlib Style"):
+                style_input = discord.ui.TextInput(
+                    label="Style name (e.g., seaborn, ggplot)",
+                    placeholder="",
+                    required=False,
+                    default=str(defaults.get("style", "")),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"style": self.style_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["style"] = normalized.get("style", "")
+                    await context.app_ok(modal_interaction, "Style saved.", ephemeral=True)
+
+            return StyleModal()
+
+        elif topic == "line_width":
+            class LineWidthModal(discord.ui.Modal, title="Line Width"):
+                line_width_input = discord.ui.TextInput(
+                    label="Line width (float)",
+                    placeholder="2.0",
+                    required=False,
+                    default=str(defaults.get("line_width", 2.0)),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"line_width": self.line_width_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["line_width"] = normalized.get("line_width", 2.0)
+                    await context.app_ok(modal_interaction, "Line width saved.", ephemeral=True)
+
+            return LineWidthModal()
+
+        elif topic == "figsize":
+            def _stringify_figsize(value) -> str:
+                if isinstance(value, (list, tuple)) and len(value) == 2:
+                    return f"{value[0]}, {value[1]}"
+                return "8, 5"
+
+            class FigsizeModal(discord.ui.Modal, title="Figure Size"):
+                figsize_input = discord.ui.TextInput(
+                    label="Size (width, height)",
+                    placeholder="8, 5",
+                    required=False,
+                    default=_stringify_figsize(defaults.get("figsize", [8, 5])),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"figsize": self.figsize_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["figsize"] = normalized.get("figsize", [8, 5])
+                    await context.app_ok(modal_interaction, "Figure size saved.", ephemeral=True)
+
+            return FigsizeModal()
+
+        return None
 
     def _sync_stored_config(self, session_state: dict, cfg: dict) -> None:
         """Sync stored defaults from a config dict for later editing."""
@@ -268,6 +377,9 @@ class charts(commands.Cog):
             "grid": cfg.get("grid"),
             "style": cfg.get("style"),
             "line_width": cfg.get("line_width"),
+            "mean_line": cfg.get("mean_line", False),
+            "mean_color": cfg.get("mean_color", "red"),
+            "mean_style": cfg.get("mean_style", "solid"),
         })
         self._sync_advanced_config(session_state, cfg)
 
@@ -319,6 +431,15 @@ class charts(commands.Cog):
         line_width_value = cfg.get("line_width")
         line_width_text = "" if line_width_value is None else str(line_width_value).strip()
 
+        mean_line_value = cfg.get("mean_line")
+        mean_line_text = "" if mean_line_value is None else str(mean_line_value).strip()
+
+        mean_color_value = cfg.get("mean_color")
+        mean_color_text = "" if mean_color_value is None else str(mean_color_value).strip()
+
+        mean_style_value = cfg.get("mean_style")
+        mean_style_text = "" if mean_style_value is None else str(mean_style_value).strip()
+
         return {
             "chart_type": str(cfg.get("chart_type") or "").strip(),
             "title": title_value,
@@ -332,6 +453,9 @@ class charts(commands.Cog):
             "grid": grid_text,
             "style": style_text,
             "line_width": line_width_text,
+            "mean_line": mean_line_text,
+            "mean_color": mean_color_text,
+            "mean_style": mean_style_text,
         }
 
     def _append_config_history(self, session_state: dict, cfg: dict) -> None:
@@ -372,6 +496,9 @@ class charts(commands.Cog):
             and _norm_text(cfg.get("grid")) == _norm_text(stored_config.get("grid"))
             and _norm_text(cfg.get("style")) == _norm_text(stored_config.get("style"))
             and _norm_text(cfg.get("line_width")) == _norm_text(stored_config.get("line_width"))
+            and _norm_text(cfg.get("mean_line")) == _norm_text(stored_config.get("mean_line"))
+            and _norm_text(cfg.get("mean_color")) == _norm_text(stored_config.get("mean_color"))
+            and _norm_text(cfg.get("mean_style")) == _norm_text(stored_config.get("mean_style"))
         )
 
     async def _update_tracked_panel_messages(
@@ -928,13 +1055,41 @@ class charts(commands.Cog):
                 super().__init__(style=discord.ButtonStyle.secondary, label="Advanced", emoji="⚙️")
 
             async def callback(self, interaction: discord.Interaction):
-                """Open advanced options modal."""
+                """Open advanced options panel."""
                 if not await cog._ensure_owner(interaction, session_state):
                     return
                 if session_state.get("cancelled"):
                     await context.app_error(interaction, "Configuration was cancelled.")
                     return
-                modal = cog._create_advanced_modal(session_state)
+                advanced_select = next(
+                    (
+                        item for item in self.view.children
+                        if isinstance(item, discord.ui.Select)
+                        and getattr(item, "placeholder", "") == "Select topics to configure"
+                    ),
+                    None,
+                )
+                if advanced_select:
+                    self.view.remove_item(advanced_select)
+                    self.label = "Advanced"
+                else:
+                    self.view.add_item(cog._create_advanced_topic_select(session_state))
+                    self.label = "Hide Advanced"
+                await interaction.response.edit_message(view=self.view)
+
+        class MeanLineButton(discord.ui.Button):
+            def __init__(self):
+                """Initialize the Mean Line config button."""
+                super().__init__(style=discord.ButtonStyle.secondary, label="Mean Line", emoji="📊")
+
+            async def callback(self, interaction: discord.Interaction):
+                """Open mean line configuration modal."""
+                if not await cog._ensure_owner(interaction, session_state):
+                    return
+                if session_state.get("cancelled"):
+                    await context.app_error(interaction, "Configuration was cancelled.")
+                    return
+                modal = cog._create_mean_line_modal(session_state)
                 await interaction.response.send_modal(modal)
 
         class RenderButton(discord.ui.Button):
@@ -1199,11 +1354,24 @@ class charts(commands.Cog):
                 super().__init__(style=discord.ButtonStyle.secondary, label="Advanced", emoji="⚙️")
 
             async def callback(self, interaction: discord.Interaction):
-                """Open advanced options modal."""
+                """Open advanced options panel."""
                 if not await cog._ensure_owner(interaction, session_state):
                     return
-                modal = cog._create_advanced_modal(session_state)
-                await interaction.response.send_modal(modal)
+                advanced_select = next(
+                    (
+                        item for item in self.view.children
+                        if isinstance(item, discord.ui.Select)
+                        and getattr(item, "placeholder", "") == "Select topics to configure"
+                    ),
+                    None,
+                )
+                if advanced_select:
+                    self.view.remove_item(advanced_select)
+                    self.label = "Advanced"
+                else:
+                    self.view.add_item(cog._create_advanced_topic_select(session_state))
+                    self.label = "Hide Advanced"
+                await interaction.response.edit_message(view=self.view)
 
         class RenderButton(discord.ui.Button):
             def __init__(self):

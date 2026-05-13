@@ -102,6 +102,9 @@ DEFAULT_CONFIG = {
     "alpha": 1.0,
     "autopct": "%.1f%%",
     "startangle": 0,
+    "mean_line": False,
+    "mean_color": "red",
+    "mean_style": "solid",
 }
 
 
@@ -164,5 +167,16 @@ def normalize_config(raw_cfg: dict | None) -> dict:
         cfg["startangle"] = float(startangle) if startangle is not None else DEFAULT_CONFIG["startangle"]
     except (TypeError, ValueError):
         cfg["startangle"] = DEFAULT_CONFIG["startangle"]
+
+    cfg["mean_line"] = _parse_bool(cfg.get("mean_line", False))
+    
+    mean_color = cfg.get("mean_color")
+    cfg["mean_color"] = str(mean_color).strip() if mean_color is not None else DEFAULT_CONFIG["mean_color"]
+    
+    mean_style = cfg.get("mean_style")
+    cfg["mean_style"] = str(mean_style).strip().lower() if mean_style is not None else DEFAULT_CONFIG["mean_style"]
+    valid_styles = {"solid", "dotted", "dashed"}
+    if cfg["mean_style"] not in valid_styles:
+        cfg["mean_style"] = DEFAULT_CONFIG["mean_style"]
 
     return cfg

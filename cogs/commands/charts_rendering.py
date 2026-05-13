@@ -30,6 +30,23 @@ def build_chart(cfg: dict, labels: list[str], values: list[float]) -> bytes:
         if cfg.get("grid", True):
             ax.grid(axis="y", alpha=0.2)
 
+    # Draw mean line if enabled
+    if cfg.get("mean_line", False) and values:
+        mean_value = sum(values) / len(values)
+        mean_color = cfg.get("mean_color", "red")
+        mean_style_raw = cfg.get("mean_style", "solid").lower().strip()
+        
+        # Convert style names to matplotlib linestyle
+        style_map = {
+            "solid": "-",
+            "dotted": ":",
+            "dashed": "--",
+        }
+        linestyle = style_map.get(mean_style_raw, "-")
+        
+        ax.axhline(y=mean_value, color=mean_color, linestyle=linestyle, linewidth=2, label=f"Mean: {mean_value:.2f}")
+        ax.legend()
+
     plt.tight_layout()
     output = io.BytesIO()
     fmt = cfg["output"]
