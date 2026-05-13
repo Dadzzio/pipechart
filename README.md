@@ -1,70 +1,64 @@
 # PipeChart
 
-PipeChart is a Discord bot (Python) that provides an interactive chart-generation workflow.
+PipeChart is a Discord bot for turning CSV data into charts. It supports an interactive setup flow, direct chart commands, and optional JSON configuration for styling and export settings.
 
-- Render charts from a CSV dataset and optional JSON configuration.
-- Configure chart options through interactive Discord UI (views/modals).
-- Support bar, line and pie chart types and multiple output formats.
-
-This project is part of the IBM internship practical program (ZSEn Kraków, 2025/2026).
+This project is part of the IBM internship practical program at ZSEn Kraków (2025/2026).
 Contributors: [Bartosz Brzezanski](https://github.com/brzerzan), [Szymon Payerhin](https://github.com/Dadzzio).
 
-## Project Description
+## Features
 
-PipeChart helps users prepare chart data and generate chart outputs through an interactive Discord workflow. The bot can read an optional JSON configuration, accept a CSV attachment as data, and render charts using `matplotlib`.
-
-The first version focuses on one chart type and one output format, with room to extend both the chart list and export options later.
+- Render bar, line, and pie charts from CSV attachments.
+- Use an optional JSON file to customize labels, colors, figure size, output format, and advanced chart settings.
+- Configure charts through Discord UI components with buttons, selects, and modals.
+- Export charts as `png`, `svg`, or `pdf`.
 
 ## Requirements
 
-- Discord bot token configured in `.env`
-- Optional `beta=true` flag in `.env` for beta presence and startup mode
 - Python 3.14
-- `discord.py` and `matplotlib` installed (see `requirements.txt`)
-- CSV dataset input; optional JSON config
-- Bot must have permissions to send messages, use embeds, and use interactive components
+- Dependencies from `requirements.txt`
+- A Discord bot token in `.env` as `DISCORD_TOKEN`
+- Optional `PREFIX` or `BOT_PREFIX` value in `.env` if you do not want the default `\`
+- Optional `BETA=true` flag in `.env` to prefer the beta emoji set
+- Bot permissions to send messages, embed links, and use interactive components
 
-## Tech stack
+## Running the bot
 
-- Python 3.14
-- `discord.py` for bot + UI components
-- `matplotlib` for rendering charts
-- JSON/CSV handling using the standard library
+1. Install dependencies from `requirements.txt`.
+2. Set `DISCORD_TOKEN` in `.env`.
+3. Run `python main.py`.
 
-## JIRA Board
+## Commands
 
-- Project board: [JIRA board](https://zse-ibm.atlassian.net/)
+Prefix commands use `\` by default. Slash commands are also available.
 
-## Bot Commands (Current)
+### Help
 
-Command prefix: `\`
+- `\help` - show a short command reference
 
-Slash commands are supported.
+### Interactive chart flow
 
-- `\chart_render` (alias: `\crender`)
-  - Interactive chart rendering flow (public Building message + private configuration panel).
-  - Attach required `*.csv` and optional `*.json` config in the same message.
+- `\chart_render`
+- `/chart_render`
 
-- `\bar`, `\line`, `\pie` (and their slash equivalents)
-  - Direct render commands (accept attachments and optional JSON config).
+Use this when you want the guided setup flow with a private configuration panel and an initial public building message.
 
-- `/chart_render`, `/bar`, `/line`, `/pie`
-  - Slash versions of the commands. `chart_render` runs the interactive flow by default.
+### Direct chart commands
 
-## Supported chart types
+- `\bar` and `/bar`
+- `\line` and `/line`
+- `\pie` and `/pie`
 
-- `bar`
-- `line`
-- `pie`
+Use these for direct rendering when you already know the chart type you want.
 
-## Supported output formats
+## Supported inputs
 
-- `png`
-- `svg`
+- A `.csv` file is required.
+- A `.json` file is optional.
+- CSV files must include a header row.
+- If `x_column` and `y_column` are not provided, the first two CSV columns are used.
+- Pie charts require non-negative values and a positive total sum.
 
-## JSON Config Schema (Optional)
-
-If no config is attached, defaults are used. Example schema:
+## JSON config example
 
 ```json
 {
@@ -77,22 +71,42 @@ If no config is attached, defaults are used. Example schema:
   "color": "#4E79A7",
   "output": "png",
   "figsize": [8, 5],
-  "dpi": 150
+  "dpi": 150,
+  "grid": true,
+  "style": "seaborn-v0_8",
+  "line_width": 2.5,
+  "mean_line": true,
+  "mean_color": "red",
+  "mean_style": "dashed"
 }
 ```
 
-Notes
+The JSON file can override both the basic chart fields and the newer advanced settings:
 
-- `x_column` and `y_column` are optional; by default the first and second CSV columns are used.
-- Pie charts require non-negative values and positive total sum.
+- `chart_type`: `bar`, `line`, or `pie`
+- `x_column` and `y_column`: CSV columns to plot
+- `title`, `x_label`, `y_label`, and `color`: chart styling for bar and line charts
+- `colors` and `startangle`: pie chart styling options
+- `output`: `png`, `svg`, or `pdf`
+- `figsize`, `dpi`, `grid`, and `style`: figure and rendering settings
+- `line_width`, `marker`, `bar_width`, and `alpha`: chart-specific styling
+- `mean_line`, `mean_color`, and `mean_style`: optional mean line overlay for line and bar charts
 
-Recent implementation notes
+## Supported chart types
 
-- Centralized user error reporting via `objects/context.context.app_error(...)` for consistent owner checks and ephemeral errors.
-- The interactive flow tracks `config_messages` and `edit_messages` so the bot can update configuration and edit panels after rendering (success or error).
-- Color inputs are validated using `matplotlib.colors.is_color_like` and configuration panels show clear validation errors.
-- The public "Building..." message for preset chart types is intentionally minimalist to avoid exposing chart details while rendering.
-- Message edits use a robust fallback: try `Message.edit(...)`, then `interaction.followup.edit_message(...)` if needed.
-- Consolidated duplicate helpers (single `BuildingEditView`) and simplified the Edit button emoji.
+- `bar`
+- `line`
+- `pie`
+
+## Supported output formats
+
+- `png`
+- `svg`
+- `pdf`
+
+## Notes
+
+- The interactive flow keeps track of configuration and edit panels so charts can be updated after rendering.
+- The bot uses `matplotlib` for rendering and the standard library for CSV and JSON parsing.
 
 
