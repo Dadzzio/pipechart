@@ -1,4 +1,5 @@
 # PipeChart
+<img width="270" height="267" alt="stonks" src="https://github.com/user-attachments/assets/c1f94ea8-68df-4ada-985e-ce9052ab8a8c" /> 
 
 PipeChart is a Discord bot for turning CSV data into charts. It supports an interactive setup flow, direct chart commands, and optional JSON configuration for styling and export settings.
 
