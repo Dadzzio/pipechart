@@ -117,15 +117,15 @@ class charts(commands.Cog):
         if cache_miss:
             cfg_base = parse_config(json_raw if json_attachment else None)
             rows, columns = read_csv_rows(csv_raw)
-            x_col, y_col = pick_columns(cfg_base, columns)
-            labels, values = extract_series(rows, x_col, y_col)
+            x_col, y_cols = pick_columns(cfg_base, columns)
+            labels, values = extract_series(rows, x_col, y_cols)
             cache.update({
                 "csv_hash": csv_hash,
                 "json_hash": json_hash,
                 "rows": rows,
                 "columns": columns,
                 "x_col": x_col,
-                "y_col": y_col,
+                "y_cols": y_cols,
                 "labels": labels,
                 "values": values,
                 "cfg_base": cfg_base,
@@ -140,10 +140,45 @@ class charts(commands.Cog):
             cache["rows"],
             cache["columns"],
             cache["x_col"],
-            cache["y_col"],
+            cache["y_cols"],
             cache["labels"],
             cache["values"],
         )
+
+    def _refresh_series_from_config(
+        self,
+        cfg: dict,
+        rows: list[dict],
+        columns: list[str],
+    ) -> tuple[list[str], list[dict]]:
+        """Recompute chart labels and series after config changes."""
+        x_col, y_cols = pick_columns(cfg, columns)
+        labels, values = extract_series(rows, x_col, y_cols)
+        cfg["x_column"] = x_col
+        cfg["y_columns"] = y_cols
+        cfg["y_column"] = y_cols[0] if y_cols else None
+        return labels, values
+
+    def _y_columns_placeholder(self, columns: list[str], x_col: str | None = None) -> str:
+        """Build a readable y_columns placeholder from CSV columns."""
+        y_columns = [str(column).strip() for column in columns if str(column).strip()]
+        if x_col and y_columns and y_columns[0] == x_col:
+            y_columns = y_columns[1:]
+        if x_col and x_col in y_columns:
+            y_columns = [column for column in y_columns if column != x_col]
+        return ", ".join(y_columns[:3]) if y_columns else "product_a, product_b, product_c"
+
+    async def _y_columns_placeholder_from_csv(self, csv_file: discord.Attachment, session_state: dict) -> str:
+        """Build a y_columns placeholder from the uploaded CSV."""
+        cached_columns = session_state.get("data_cache", {}).get("columns", [])
+        cached_x_col = session_state.get("data_cache", {}).get("x_col")
+        if cached_columns:
+            return self._y_columns_placeholder(cached_columns, cached_x_col)
+
+        csv_raw = await read_attachment_text(csv_file)
+        _rows, columns = read_csv_rows(csv_raw)
+        x_col = columns[0] if columns else None
+        return self._y_columns_placeholder(columns, x_col)
 
     def _get_render_cache_key(self, session_state: dict, cfg: dict) -> str:
         """Build a render cache key using data and config state."""
@@ -178,6 +213,7 @@ class charts(commands.Cog):
             "mean_line": cfg.get("mean_line", False),
             "mean_color": cfg.get("mean_color", "red"),
             "mean_style": cfg.get("mean_style", "solid"),
+            "output": cfg.get("output", "png"),
         })
 
     def _apply_advanced_config(self, cfg: dict, session_state: dict) -> dict:
@@ -196,18 +232,31 @@ class charts(commands.Cog):
         class AdvancedTopicSelect(discord.ui.Select):
             def __init__(self):
                 """Initialize the advanced topic selector."""
+                # Determine current chart type to filter options
+                pending_cfg = session_state.get("pending_config", {})
+                chart_type = pending_cfg.get("chart_type", "").lower() if pending_cfg else ""
+                
+                # Build options, excluding mean_line for pie charts
+                options = []
+                if chart_type != "pie":
+                    options.extend([
+                        discord.SelectOption(label="Mean Line", value="mean_line", emoji="📊"),
+                        discord.SelectOption(label="Grid", value="grid", emoji="📐"),
+                        ])
+                options.extend([
+                    discord.SelectOption(label="DPI", value="dpi", emoji="🖨️"),
+                    discord.SelectOption(label="Style", value="style", emoji="🎨"),
+                    discord.SelectOption(label="Line Width", value="line_width", emoji="📏"),
+                    discord.SelectOption(label="Figure Size", value="figsize", emoji="📦"),
+                    discord.SelectOption(label="Output Format", value="output", emoji="💾"),
+                ])
+                options.sort(key=lambda option: option.label.lower())
+                
                 super().__init__(
                     placeholder="Select topics to configure",
                     min_values=1,
                     max_values=1,
-                    options=[
-                        discord.SelectOption(label="Mean Line", value="mean_line", emoji="📊"),
-                        discord.SelectOption(label="DPI", value="dpi", emoji="🖨️"),
-                        discord.SelectOption(label="Grid", value="grid", emoji="📐"),
-                        discord.SelectOption(label="Style", value="style", emoji="🎨"),
-                        discord.SelectOption(label="Line Width", value="line_width", emoji="📏"),
-                        discord.SelectOption(label="Figure Size", value="figsize", emoji="📦"),
-                    ],
+                    options=options,
                 )
 
             async def callback(self, interaction: discord.Interaction):
@@ -353,6 +402,24 @@ class charts(commands.Cog):
 
             return FigsizeModal()
 
+        elif topic == "output":
+            class OutputModal(discord.ui.Modal, title="Output Format"):
+                output_input = discord.ui.TextInput(
+                    label="Output Format (png/svg/pdf)",
+                    placeholder="png, svg, or pdf",
+                    max_length=3,
+                    required=False,
+                    default=str(defaults.get("output", "png")),
+                )
+
+                async def on_submit(self, modal_interaction: discord.Interaction):
+                    raw_cfg = {"output": self.output_input.value}
+                    normalized = normalize_config(raw_cfg)
+                    session_state.setdefault("advanced_config", {})["output"] = normalized.get("output", "png")
+                    await context.app_ok(modal_interaction, "Output format saved.", ephemeral=True)
+
+            return OutputModal()
+
         return None
 
     def _sync_stored_config(self, session_state: dict, cfg: dict) -> None:
@@ -370,8 +437,8 @@ class charts(commands.Cog):
             "x_label": cfg.get("x_label", ""),
             "y_label": cfg.get("y_label", ""),
             "color": cfg.get("color", "#4E79A7"),
-            "output": cfg.get("output", "png"),
             "colors": ", ".join(colors) if isinstance(colors, list) else "",
+            "y_columns": ", ".join(cfg.get("y_columns", [])) if isinstance(cfg.get("y_columns"), list) else str(cfg.get("y_columns") or ""),
             "dpi": cfg.get("dpi"),
             "figsize": cfg.get("figsize"),
             "grid": cfg.get("grid"),
@@ -394,8 +461,9 @@ class charts(commands.Cog):
         elif chart_type != "pie":
             modal.x_label_input.default = stored_config.get("x_label", "")
             modal.y_label_input.default = stored_config.get("y_label", "")
+            if hasattr(modal, "y_columns_input"):
+                modal.y_columns_input.default = stored_config.get("y_columns", "")
             modal.color_input.default = stored_config.get("color", "#4E79A7")
-        modal.output_input.default = stored_config.get("output", "png")
 
     def _normalize_config_for_history(self, cfg: dict) -> dict:
         """Normalize config fields for history comparisons."""
@@ -431,6 +499,14 @@ class charts(commands.Cog):
         line_width_value = cfg.get("line_width")
         line_width_text = "" if line_width_value is None else str(line_width_value).strip()
 
+        y_columns_value = cfg.get("y_columns")
+        if y_columns_value is None:
+            y_columns_text = ""
+        elif isinstance(y_columns_value, list):
+            y_columns_text = ", ".join([str(v).strip() for v in y_columns_value if str(v).strip()])
+        else:
+            y_columns_text = str(y_columns_value).strip()
+
         mean_line_value = cfg.get("mean_line")
         mean_line_text = "" if mean_line_value is None else str(mean_line_value).strip()
 
@@ -453,6 +529,7 @@ class charts(commands.Cog):
             "grid": grid_text,
             "style": style_text,
             "line_width": line_width_text,
+            "y_columns": y_columns_text,
             "mean_line": mean_line_text,
             "mean_color": mean_color_text,
             "mean_style": mean_style_text,
@@ -491,6 +568,7 @@ class charts(commands.Cog):
             and _norm_text(cfg.get("color")) == _norm_text(stored_config.get("color"))
             and _norm_text(cfg.get("output")) == _norm_text(stored_config.get("output"))
             and _norm_colors(cfg.get("colors")) == _norm_colors(stored_config.get("colors"))
+            and _norm_text(cfg.get("y_columns")) == _norm_text(stored_config.get("y_columns"))
             and _norm_text(cfg.get("dpi")) == _norm_text(stored_config.get("dpi"))
             and _norm_text(cfg.get("figsize")) == _norm_text(stored_config.get("figsize"))
             and _norm_text(cfg.get("grid")) == _norm_text(stored_config.get("grid"))
@@ -620,6 +698,7 @@ class charts(commands.Cog):
         color: str | None,
         output: str | None,
         colors: str | None,
+        y_columns: str | None,
     ) -> None:
         """Handle modal submission and render/update charts."""
         if not await self._ensure_owner(interaction, session_state):
@@ -657,9 +736,6 @@ class charts(commands.Cog):
                 if title:
                     cfg["title"] = title
 
-            output_fmt = self._parse_output(output)
-            cfg["output"] = output_fmt
-
             if chart_type == "pie":
                 parsed_colors = []
                 invalid_colors = []
@@ -675,6 +751,11 @@ class charts(commands.Cog):
                     if parsed_colors:
                         cfg["colors"] = parsed_colors
             else:
+                if y_columns:
+                    parsed_y_columns = [col.strip() for col in y_columns.split(",") if col.strip()]
+                    if parsed_y_columns:
+                        cfg["y_columns"] = parsed_y_columns
+                        cfg["y_column"] = parsed_y_columns[0]
                 if mode == "edit":
                     if x_label is not None:
                         cfg["x_label"] = x_label.strip()
@@ -703,6 +784,7 @@ class charts(commands.Cog):
                             return
                         cfg["color"] = val
 
+                labels, values = self._refresh_series_from_config(cfg, rows, _columns)
             cfg = self._apply_advanced_config(cfg, session_state)
 
             if mode == "edit":
@@ -803,6 +885,7 @@ class charts(commands.Cog):
         original_message: discord.Message | None,
         fixed_chart_type: str | None,
         mode: str,
+        y_columns_placeholder: str = "product_a, product_b",
     ) -> discord.ui.Modal:
         """Create a configuration or edit modal for a chart type."""
         cog = self
@@ -827,13 +910,6 @@ class charts(commands.Cog):
                     max_length=250,
                     required=False,
                 )
-                output_input = discord.ui.TextInput(
-                    label="Output Format (png/svg/pdf)",
-                    placeholder="png, svg, or pdf",
-                    max_length=3,
-                    required=False,
-                    default="png",
-                )
 
                 async def on_submit(self, interaction: discord.Interaction):
                     """Handle pie modal submission."""
@@ -850,8 +926,9 @@ class charts(commands.Cog):
                         x_label=None,
                         y_label=None,
                         color=None,
-                        output=self.output_input.value,
+                        output=None,
                         colors=self.colors_input.value,
+                        y_columns=None,
                     )
 
             modal = PieConfigModal()
@@ -878,19 +955,18 @@ class charts(commands.Cog):
                     max_length=100,
                     required=False,
                 )
+                y_columns_input = discord.ui.TextInput(
+                    label="Y Columns (comma-separated)",
+                    placeholder=y_columns_placeholder,
+                    max_length=250,
+                    required=False,
+                )
                 color_input = discord.ui.TextInput(
                     label="Color (any matplotlib value)",
                     placeholder="#4E79A7, red, 0.5",
                     max_length=50,
                     required=False,
                     default="#4E79A7",
-                )
-                output_input = discord.ui.TextInput(
-                    label="Output Format (png/svg/pdf)",
-                    placeholder="png, svg, or pdf",
-                    max_length=3,
-                    required=False,
-                    default="png",
                 )
 
                 async def on_submit(self, interaction: discord.Interaction):
@@ -908,8 +984,9 @@ class charts(commands.Cog):
                         x_label=self.x_label_input.value,
                         y_label=self.y_label_input.value,
                         color=self.color_input.value,
-                        output=self.output_input.value,
+                        output=None,
                         colors=None,
+                        y_columns=self.y_columns_input.value,
                     )
 
             modal = ConfigModal()
@@ -927,73 +1004,6 @@ class charts(commands.Cog):
     ) -> discord.ui.View:
         """Create the ephemeral panel view for editing a chart."""
         cog = self
-
-        class DeleteButton(discord.ui.Button):
-            def __init__(self):
-                """Initialize the Delete button."""
-                super().__init__(style=discord.ButtonStyle.danger, label="Delete", emoji="🗑️")
-
-            async def callback(self, interaction: discord.Interaction):
-                """Prompt for confirmation before deleting."""
-                if not await cog._ensure_owner(interaction, session_state):
-                    return
-
-                class ConfirmDeleteView(discord.ui.View):
-                    def __init__(self):
-                        super().__init__(timeout=60)
-                        self.message = None
-
-                    @discord.ui.button(label="Yes, delete", style=discord.ButtonStyle.danger, emoji="🗑️")
-                    async def confirm(self, confirm_interaction: discord.Interaction, button: discord.ui.Button):
-                        session_state["cancelled"] = True
-                        try:
-                            if original_message:
-                                await original_message.delete()
-                        except Exception:
-                            pass
-                        
-                        combined_panels = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
-                        for panel_msg in combined_panels:
-                            try:
-                                await panel_msg.delete()
-                            except Exception:
-                                pass
-                                
-                        if self.message: 
-                            try:
-                                await self.message.delete()
-                            except Exception:
-                                pass
-
-                    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-                    async def cancel(self, cancel_interaction: discord.Interaction, button: discord.ui.Button):
-                        await cancel_interaction.response.edit_message(
-                            content="Deletion cancelled.",
-                            embed=None,
-                            view=None
-                        )
-
-                    async def on_timeout(self):
-                        for item in self.children:
-                            item.disabled = True
-                        if self.message:
-                            try:
-                                await self.message.edit(content="⏱️ Confirmation timed out.", view=self, embed=None)
-                            except Exception:
-                                pass
-
-                confirm_embed = discord.Embed(
-                    title="🗑️ Are you sure?",
-                    description="This will permanently delete the chart message and close all configuration panels.",
-                    color=0xF54336
-                )
-                
-                view = ConfirmDeleteView()
-                await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
-                try:
-                    view.message = await interaction.original_response()
-                except Exception:
-                    pass
 
         class MainSettingsButton(discord.ui.Button):
             def __init__(self):
@@ -1016,12 +1026,15 @@ class charts(commands.Cog):
                     original_message=original_message,
                     fixed_chart_type=fixed_chart_type,
                     mode="edit",
+                    y_columns_placeholder=await cog._y_columns_placeholder_from_csv(csv_file, session_state),
                 )
                 await interaction.response.send_modal(modal)
 
         class EditChartTypeSelect(discord.ui.Select):
             def __init__(self):
                 """Initialize chart type selector for edit panel."""
+                pending_cfg = session_state.get("pending_config", {})
+                current_chart_type = pending_cfg.get("chart_type", "").lower() if pending_cfg else ""
                 super().__init__(
                     placeholder="Select chart type",
                     min_values=1,
@@ -1046,6 +1059,7 @@ class charts(commands.Cog):
                     original_message=original_message,
                     fixed_chart_type=None,
                     mode="edit",
+                    y_columns_placeholder=await cog._y_columns_placeholder_from_csv(csv_file, session_state),
                 )
                 await select_interaction.response.send_modal(modal)
 
@@ -1122,6 +1136,7 @@ class charts(commands.Cog):
                     pending_cfg.get("chart_type"),
                 )
                 cfg.update(pending_cfg)
+                labels, values = cog._refresh_series_from_config(cfg, rows, _columns)
                 cfg = cog._apply_advanced_config(cfg, session_state)
                 cog._sync_stored_config(session_state, cfg)
 
@@ -1152,6 +1167,80 @@ class charts(commands.Cog):
                     await cog._update_tracked_panel_messages(interaction, session_state, success_embed)
                     cog._append_config_history(session_state, cfg)
 
+        class DeleteButton(discord.ui.Button):
+            def __init__(self):
+                """Initialize the Delete button for the rendered chart."""
+                super().__init__(style=discord.ButtonStyle.danger, label="Delete", emoji="🗑️")
+
+            async def callback(self, interaction: discord.Interaction):
+                """Prompt for confirmation before deleting the rendered chart."""
+                if not await cog._ensure_owner(interaction, session_state):
+                    return
+
+                chart_message = interaction.message
+
+                class ConfirmDeleteView(discord.ui.View):
+                    def __init__(self):
+                        super().__init__(timeout=60)
+                        self.message = None
+
+                    @discord.ui.button(label="Yes, delete", style=discord.ButtonStyle.danger, emoji="🗑️")
+                    async def confirm(self, confirm_interaction: discord.Interaction, button: discord.ui.Button):
+                        session_state["cancelled"] = True
+                        try:
+                            if original_message:
+                                await original_message.delete()
+                        except Exception:
+                            pass
+
+                        combined_panels = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                        for panel_msg in combined_panels:
+                            try:
+                                await panel_msg.delete()
+                            except Exception:
+                                pass
+
+                        if chart_message:
+                            try:
+                                await chart_message.delete()
+                            except Exception:
+                                pass
+
+                    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+                    async def cancel(self, cancel_interaction: discord.Interaction, button: discord.ui.Button):
+                        await cancel_interaction.response.edit_message(
+                            content="Deletion cancelled.",
+                            embed=None,
+                            view=None,
+                        )
+
+                    async def on_timeout(self):
+                        for item in self.children:
+                            item.disabled = True
+                        if self.message:
+                            try:
+                                timeout_embed = discord.Embed(
+                                    title="⏱️ Confirmation Timed Out",
+                                    description="The confirmation prompt has expired. The chart and panels remain unchanged.",
+                                    color=0xF59E0B,
+                                )
+                                await self.message.edit(embed=timeout_embed, view=self, content=None)
+                            except Exception:
+                                pass
+
+                confirm_embed = discord.Embed(
+                    title="🗑️ Are you sure?",
+                    description="This will permanently delete the chart message and close all configuration panels.",
+                    color=0xF54336,
+                )
+
+                view = ConfirmDeleteView()
+                await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
+                try:
+                    view.message = await interaction.original_response()
+                except Exception:
+                    pass
+
         class EditPanelContainerView(discord.ui.View):
             def __init__(self):
                 """Initialize the edit panel view container."""
@@ -1162,7 +1251,6 @@ class charts(commands.Cog):
                     self.add_item(EditChartTypeSelect())
                 self.add_item(RenderButton())
                 self.add_item(AdvancedButton())
-                self.add_item(DeleteButton())
 
             async def on_timeout(self):
                 """Disable the edit panel when timeout occurs."""
@@ -1235,8 +1323,124 @@ class charts(commands.Cog):
         class EditChartView(discord.ui.View):
             def __init__(self):
                 """Initialize the chart message view container."""
-                super().__init__(timeout=None)
+                super().__init__(timeout=3600)
                 self.add_item(EditButton())
+
+                class DeleteButton(discord.ui.Button):
+                    def __init__(self):
+                        """Initialize the Delete button for the rendered chart."""
+                        super().__init__(style=discord.ButtonStyle.danger, label="Delete", emoji="🗑️")
+
+                    async def callback(self, interaction: discord.Interaction):
+                        """Prompt for confirmation before deleting the rendered chart."""
+                        if not await cog._ensure_owner(interaction, session_state):
+                            return
+
+                        chart_message = interaction.message
+
+                        class ConfirmDeleteView(discord.ui.View):
+                            def __init__(self):
+                                super().__init__(timeout=60)
+                                self.message = None
+
+                            @discord.ui.button(label="Yes, delete", style=discord.ButtonStyle.danger, emoji="🗑️")
+                            async def confirm(self, confirm_interaction: discord.Interaction, button: discord.ui.Button):
+                                session_state["cancelled"] = True
+                                combined_panels = session_state.get("config_messages", []) + session_state.get("edit_messages", [])
+                                for panel_msg in combined_panels:
+                                    try:
+                                        await panel_msg.delete()
+                                    except Exception:
+                                        pass
+
+                                if chart_message:
+                                    try:
+                                        await chart_message.delete()
+                                    except Exception:
+                                        pass
+                                if self.message: 
+                                    try:
+                                        await self.message.delete()
+                                    except Exception:
+                                        try:
+                                            await confirm_interaction.delete()
+                                        except Exception:
+                                            try:
+                                                await confirm_interaction.response.edit_message(content="Deleted.", embed=None, view=None)
+                                            except Exception:
+                                                pass
+
+                            @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+                            async def cancel(self, cancel_interaction: discord.Interaction, button: discord.ui.Button):
+                                await cancel_interaction.response.edit_message(
+                                    content="Deletion cancelled.",
+                                    embed=None,
+                                    view=None,
+                                )
+
+                            async def on_timeout(self):
+                                for item in self.children:
+                                    item.disabled = True
+                                if self.message:
+                                    try:
+                                        timeout_embed = discord.Embed(
+                                            title="⏱️ Confirmation Timed Out",
+                                            description="The confirmation prompt has expired. The chart and panels remain unchanged.",
+                                            color=0xF59E0B,
+                                        )
+                                        await self.message.edit(embed=timeout_embed, view=self, content=None)
+                                    except Exception:
+                                        pass
+
+                        confirm_embed = discord.Embed(
+                            title="🗑️ Are you sure?",
+                            description="This will permanently delete the chart message and close all configuration panels.",
+                            color=0xF54336,
+                        )
+
+                        view = ConfirmDeleteView()
+                        await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
+                        try:
+                            view.message = await interaction.original_response()
+                        except Exception:
+                            pass
+
+                self.add_item(DeleteButton())
+
+                class DownloadButton(discord.ui.Button):
+                    def __init__(self):
+                        """Initialize the Download button for the rendered chart."""
+                        super().__init__(style=discord.ButtonStyle.success, label="Download", emoji="⬇️")
+
+                    async def callback(self, interaction: discord.Interaction):
+                        """Send download link for the chart."""
+                        if not await cog._ensure_owner(interaction, session_state):
+                            return
+
+                        chart_message = interaction.message
+                        if not chart_message or not chart_message.attachments:
+                            await context.app_error(interaction, "Chart file not found.")
+                            return
+
+                        attachment = chart_message.attachments[0]
+                        download_embed = discord.Embed(
+                            title="📥 Download Chart",
+                            description=f"[Click here to download your chart]({attachment.url})",
+                            color=0x10B981,
+                        )
+                        download_embed.add_field(
+                            name="📄 Filename",
+                            value=attachment.filename,
+                            inline=True,
+                        )
+                        download_embed.add_field(
+                            name="📊 Size",
+                            value=f"{attachment.size:,} bytes",
+                            inline=True,
+                        )
+                        await interaction.response.send_message(embed=download_embed, ephemeral=True)
+
+                self.add_item(DownloadButton())
 
             async def on_timeout(self):
                 """Disable the Edit button when timeout occurs."""
@@ -1345,6 +1549,7 @@ class charts(commands.Cog):
                     original_message=original_message,
                     fixed_chart_type=fixed_chart_type,
                     mode="config",
+                    y_columns_placeholder=await cog._y_columns_placeholder_from_csv(csv_file, session_state),
                 )
                 await interaction.response.send_modal(modal)
 
@@ -1400,6 +1605,7 @@ class charts(commands.Cog):
                     pending_cfg.get("chart_type"),
                 )
                 cfg.update(pending_cfg)
+                labels, values = cog._refresh_series_from_config(cfg, rows, _columns)
                 cfg = cog._apply_advanced_config(cfg, session_state)
                 cog._sync_stored_config(session_state, cfg)
 
@@ -1467,6 +1673,7 @@ class charts(commands.Cog):
                     original_message=original_message,
                     fixed_chart_type=fixed_chart_type,
                     mode="config",
+                    y_columns_placeholder=await cog._y_columns_placeholder_from_csv(csv_file, session_state),
                 )
                 await interaction.response.send_modal(modal)
 

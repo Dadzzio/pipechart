@@ -9,6 +9,7 @@ Contributors: [Bartosz Brzezanski](https://github.com/brzerzan), [Szymon Payerhi
 ## Features
 
 - Render bar, line, and pie charts from CSV attachments.
+- Render grouped bar charts and multi-line charts from multiple y columns.
 - Use an optional JSON file to customize labels, colors, figure size, output format, and advanced chart settings.
 - Configure charts through Discord UI components with buttons, selects, and modals.
 - Export charts as `png`, `svg`, or `pdf`.
@@ -57,6 +58,7 @@ Use these for direct rendering when you already know the chart type you want.
 - A `.json` file is optional.
 - CSV files must include a header row.
 - If `x_column` and `y_column` are not provided, the first two CSV columns are used.
+- For bar and line charts, `y_columns` can be used to render multiple series on one chart.
 - Pie charts require non-negative values and a positive total sum.
 
 ## JSON config example
@@ -64,20 +66,21 @@ Use these for direct rendering when you already know the chart type you want.
 ```json
 {
   "chart_type": "bar",
-  "x_column": "category",
-  "y_column": "value",
-  "title": "Sales by Category",
-  "x_label": "Category",
-  "y_label": "Sales",
-  "color": "#4E79A7",
+  "x_column": "quarter",
+  "y_columns": ["north_revenue", "south_revenue"],
+  "title": "Regional Revenue by Quarter",
+  "x_label": "Quarter",
+  "y_label": "Revenue ($)",
+  "colors": ["#2F80ED", "#F28E2B"],
   "output": "png",
-  "figsize": [8, 5],
-  "dpi": 150,
+  "figsize": [10, 6],
+  "dpi": 180,
   "grid": true,
-  "style": "seaborn-v0_8",
-  "line_width": 2.5,
+  "style": "seaborn-v0_8-whitegrid",
+  "bar_width": 0.75,
+  "alpha": 0.9,
   "mean_line": true,
-  "mean_color": "red",
+  "mean_color": "#D64545",
   "mean_style": "dashed"
 }
 ```
@@ -86,6 +89,7 @@ The JSON file can override both the basic chart fields and the newer advanced se
 
 - `chart_type`: `bar`, `line`, or `pie`
 - `x_column` and `y_column`: CSV columns to plot
+- `y_columns`: a comma-separated list or JSON array of multiple y columns for grouped bars and multi-line charts
 - `title`, `x_label`, `y_label`, and `color`: chart styling for bar and line charts
 - `colors` and `startangle`: pie chart styling options
 - `output`: `png`, `svg`, or `pdf`

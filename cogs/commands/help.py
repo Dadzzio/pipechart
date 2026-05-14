@@ -35,7 +35,15 @@ class Help(commands.Cog):
             value=(
                 "A `.csv` file is required. A `.json` file is optional and can set chart type, "
                 "axis labels, pie colors, output format, figure size, style, and advanced options like "
-                "mean_line, mean_color, mean_style, grid, line_width, marker, bar_width, alpha, and startangle."
+                "mean_line, mean_color, mean_style, grid, line_width, marker, bar_width, alpha, startangle, and y_columns."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Multi-series charts",
+            value=(
+                "For `bar` and `line`, set `y_columns` to a comma-separated list in the UI or a JSON array in the config. "
+                "Each column becomes its own series on the same chart."
             ),
             inline=False,
         )
@@ -52,6 +60,6 @@ class Help(commands.Cog):
 
         await ctx.reply(embed=embed)
 
-
+    
 async def setup(bot):
     await bot.add_cog(Help(bot))

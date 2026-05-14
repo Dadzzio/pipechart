@@ -63,18 +63,6 @@ class dev(commands.Cog):
             # Store the error response message as well
             response = await ctx.error(e)
         
-        # Delete the user's command (reset) message after 5 seconds
-        try:
-            await ctx.message.delete(delay=5.0)
-        except Exception:
-            pass
-        
-        # Delete the bot's response after 5 seconds
-        try:
-            if response:
-                await response.delete(delay=5.0)
-        except Exception:
-            pass
 
     @commands.is_owner()
     @commands.command(aliases=['rel', 'rload'])

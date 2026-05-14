@@ -12,40 +12,83 @@ class ChartSpec:
     has_axes: bool = True
 
 
-def _validate_common(values: list[float]) -> None:
-    if len(values) < 2:
+def _parse_columns(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+def _validate_common(series_data: list[dict]) -> None:
+    if not series_data:
+        raise ValueError("At least one data series is required.")
+    lengths = [len(series.get("values", [])) for series in series_data]
+    if any(length < 2 for length in lengths):
         raise ValueError("At least two rows are required.")
+    if len(set(lengths)) > 1:
+        raise ValueError("All series must have the same number of rows.")
 
 
-def _validate_pie(values: list[float]) -> None:
-    _validate_common(values)
+def _validate_pie(series_data: list[dict]) -> None:
+    if len(series_data) != 1:
+        raise ValueError("Pie chart supports only one value column.")
+    _validate_common(series_data)
+    values = series_data[0].get("values", [])
     if any(v < 0 for v in values):
         raise ValueError("Pie chart does not support negative values.")
     if sum(values) <= 0:
         raise ValueError("Pie chart requires values with positive total sum.")
 
 
-def _render_bar(ax, labels: list[str], values: list[float], cfg: dict) -> None:
-    ax.bar(
-        labels,
-        values,
-        color=cfg.get("color"),
-        width=cfg.get("bar_width", 0.8),
-        alpha=cfg.get("alpha", 1.0),
-    )
+def _render_bar(ax, labels: list[str], series_data: list[dict], cfg: dict) -> None:
+    positions = list(range(len(labels)))
+    series_count = max(len(series_data), 1)
+    group_width = float(cfg.get("bar_width", 0.8))
+    bar_width = group_width / series_count
+    colors = cfg.get("colors") or []
+
+    for idx, series in enumerate(series_data):
+        offset = (idx - (series_count - 1) / 2) * bar_width
+        series_positions = [pos + offset for pos in positions]
+        color = series.get("color") or (colors[idx] if idx < len(colors) else None)
+        label = series.get("label") or f"Series {idx + 1}"
+        ax.bar(
+            series_positions,
+            series.get("values", []),
+            color=color,
+            width=bar_width,
+            alpha=cfg.get("alpha", 1.0),
+            label=label,
+        )
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
 
 
-def _render_line(ax, labels: list[str], values: list[float], cfg: dict) -> None:
-    ax.plot(
-        labels,
-        values,
-        marker=cfg.get("marker", "o"),
-        color=cfg.get("color"),
-        linewidth=cfg.get("line_width", 2.0),
-    )
+def _render_line(ax, labels: list[str], series_data: list[dict], cfg: dict) -> None:
+    colors = cfg.get("colors") or []
+    marker = cfg.get("marker", "o")
+    line_width = cfg.get("line_width", 2.0)
+
+    for idx, series in enumerate(series_data):
+        color = series.get("color") or (colors[idx] if idx < len(colors) else None)
+        label = series.get("label") or f"Series {idx + 1}"
+        ax.plot(
+            labels,
+            series.get("values", []),
+            marker=marker,
+            color=color,
+            linewidth=line_width,
+            label=label,
+        )
 
 
-def _render_pie(ax, labels: list[str], values: list[float], cfg: dict) -> None:
+def _render_pie(ax, labels: list[str], series_data: list[dict], cfg: dict) -> None:
+    values = series_data[0].get("values", [])
     pie_colors = cfg.get("colors")
     autopct = cfg.get("autopct", "%.1f%%")
     startangle = cfg.get("startangle", 0)
@@ -152,6 +195,15 @@ def normalize_config(raw_cfg: dict | None) -> dict:
 
     cfg["figsize"] = _parse_figsize(cfg.get("figsize"))
     cfg["grid"] = _parse_bool(cfg.get("grid", True))
+
+    y_columns = _parse_columns(cfg.get("y_columns"))
+    single_y_column = cfg.get("y_column")
+    if not y_columns and single_y_column is not None:
+        single_y_text = str(single_y_column).strip()
+        if single_y_text:
+            y_columns = [single_y_text]
+    cfg["y_columns"] = y_columns
+    cfg["y_column"] = y_columns[0] if y_columns else (str(single_y_column).strip() if single_y_column is not None else None)
 
     style_value = cfg.get("style")
     cfg["style"] = str(style_value).strip() if style_value is not None else ""
