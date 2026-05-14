@@ -1324,7 +1324,6 @@ class charts(commands.Cog):
             def __init__(self):
                 """Initialize the chart message view container."""
                 super().__init__(timeout=3600)
-                self.add_item(EditButton())
 
                 class DeleteButton(discord.ui.Button):
                     def __init__(self):
@@ -1405,8 +1404,6 @@ class charts(commands.Cog):
                         except Exception:
                             pass
 
-                self.add_item(DeleteButton())
-
                 class DownloadButton(discord.ui.Button):
                     def __init__(self):
                         """Initialize the Download button for the rendered chart."""
@@ -1441,6 +1438,8 @@ class charts(commands.Cog):
                         await interaction.response.send_message(embed=download_embed, ephemeral=True)
 
                 self.add_item(DownloadButton())
+                self.add_item(EditButton())
+                self.add_item(DeleteButton())
 
             async def on_timeout(self):
                 """Disable the Edit button when timeout occurs."""
