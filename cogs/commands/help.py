@@ -1,16 +1,16 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
+
+from objects.context import context
 
 
 class Help(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="help", aliases=["h"])
-    async def help(self, ctx):
-        prefix = ctx.clean_prefix
-
-        embed = ctx.simple_embed
+    def _build_help_embed(self, prefix: str, author_name: str, author_avatar) -> discord.Embed:
+        embed = context.build_simple_embed(author_name, author_avatar)
         embed.title = "PipeChart Help"
         embed.description = (
             "Create charts from CSV attachments with optional JSON configuration. "
@@ -58,7 +58,20 @@ class Help(commands.Cog):
             inline=False,
         )
 
+        return embed
+
+    @commands.command(name="help", aliases=["h"])
+    async def help(self, ctx):
+        embed = self._build_help_embed(ctx.clean_prefix, ctx.author.display_name, ctx.author.display_avatar)
         await ctx.reply(embed=embed)
+
+    @app_commands.command(name="help", description="Show PipeChart help")
+    async def help_app(self, interaction: discord.Interaction):
+        user = interaction.user
+        author_name = getattr(user, "display_name", getattr(user, "name", "Unknown"))
+        author_avatar = getattr(user, "display_avatar", None)
+        embed = self._build_help_embed("/", author_name, author_avatar)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
     
 async def setup(bot):

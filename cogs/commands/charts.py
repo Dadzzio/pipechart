@@ -1411,9 +1411,6 @@ class charts(commands.Cog):
 
                     async def callback(self, interaction: discord.Interaction):
                         """Send download link for the chart."""
-                        if not await cog._ensure_owner(interaction, session_state):
-                            return
-
                         chart_message = interaction.message
                         if not chart_message or not chart_message.attachments:
                             await context.app_error(interaction, "Chart file not found.")
