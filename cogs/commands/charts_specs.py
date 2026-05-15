@@ -23,6 +23,17 @@ def _parse_columns(value) -> list[str]:
     return [part.strip() for part in text.split(",") if part.strip()]
 
 
+def _parse_colors(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
 def _validate_common(series_data: list[dict]) -> None:
     if not series_data:
         raise ValueError("At least one data series is required.")
@@ -230,5 +241,7 @@ def normalize_config(raw_cfg: dict | None) -> dict:
     valid_styles = {"solid", "dotted", "dashed"}
     if cfg["mean_style"] not in valid_styles:
         cfg["mean_style"] = DEFAULT_CONFIG["mean_style"]
+
+    cfg["colors"] = _parse_colors(cfg.get("colors"))
 
     return cfg

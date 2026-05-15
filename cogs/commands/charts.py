@@ -437,7 +437,7 @@ class charts(commands.Cog):
             "x_label": cfg.get("x_label", ""),
             "y_label": cfg.get("y_label", ""),
             "color": cfg.get("color", "#4E79A7"),
-            "colors": ", ".join(colors) if isinstance(colors, list) else "",
+            "colors": ", ".join(colors) if isinstance(colors, list) and colors else str(cfg.get("color", "#4E79A7")),
             "y_columns": ", ".join(cfg.get("y_columns", [])) if isinstance(cfg.get("y_columns"), list) else str(cfg.get("y_columns") or ""),
             "dpi": cfg.get("dpi"),
             "figsize": cfg.get("figsize"),
@@ -463,7 +463,8 @@ class charts(commands.Cog):
             modal.y_label_input.default = stored_config.get("y_label", "")
             if hasattr(modal, "y_columns_input"):
                 modal.y_columns_input.default = stored_config.get("y_columns", "")
-            modal.color_input.default = stored_config.get("color", "#4E79A7")
+            if hasattr(modal, "colors_input"):
+                modal.colors_input.default = stored_config.get("colors", stored_config.get("color", "#4E79A7"))
 
     def _normalize_config_for_history(self, cfg: dict) -> dict:
         """Normalize config fields for history comparisons."""
@@ -751,6 +752,21 @@ class charts(commands.Cog):
                     if parsed_colors:
                         cfg["colors"] = parsed_colors
             else:
+                parsed_colors = []
+                invalid_colors = []
+                if colors:
+                    parsed_colors = [c.strip() for c in colors.split(",") if c.strip()]
+                    for c in parsed_colors:
+                        if not mcolors.is_color_like(c):
+                            invalid_colors.append(c)
+                    if invalid_colors:
+                        err_text = f"Invalid color(s): {', '.join(invalid_colors)}. Use color names or hex like '#4E79A7'."
+                        await _handle_error(err_text)
+                        return
+                    if parsed_colors:
+                        cfg["colors"] = parsed_colors
+                        cfg["color"] = parsed_colors[0]
+
                 if y_columns:
                     parsed_y_columns = [col.strip() for col in y_columns.split(",") if col.strip()]
                     if parsed_y_columns:
@@ -766,24 +782,6 @@ class charts(commands.Cog):
                         cfg["x_label"] = x_label
                     if y_label:
                         cfg["y_label"] = y_label
-                if mode == "edit":
-                    if color is not None:
-                        val = color.strip()
-                        if not val:
-                            cfg["color"] = "#4E79A7"
-                        else:
-                            if not mcolors.is_color_like(val):
-                                await _handle_error(f"Invalid color value: {val}. Use a color name or hex like '#4E79A7'.")
-                                return
-                            cfg["color"] = val
-                else:
-                    if color:
-                        val = color.strip()
-                        if not mcolors.is_color_like(val):
-                            await _handle_error(f"Invalid color value: {val}. Use a color name or hex like '#4E79A7'.")
-                            return
-                        cfg["color"] = val
-
                 labels, values = self._refresh_series_from_config(cfg, rows, _columns)
             cfg = self._apply_advanced_config(cfg, session_state)
 
@@ -961,10 +959,10 @@ class charts(commands.Cog):
                     max_length=250,
                     required=False,
                 )
-                color_input = discord.ui.TextInput(
-                    label="Color (any matplotlib value)",
-                    placeholder="#4E79A7, red, 0.5",
-                    max_length=50,
+                colors_input = discord.ui.TextInput(
+                    label="Colors (comma-separated)",
+                    placeholder="#4E79A7, red, #F28E2B",
+                    max_length=250,
                     required=False,
                     default="#4E79A7",
                 )
@@ -983,9 +981,9 @@ class charts(commands.Cog):
                         title=self.title_input.value,
                         x_label=self.x_label_input.value,
                         y_label=self.y_label_input.value,
-                        color=self.color_input.value,
+                        color=None,
                         output=None,
-                        colors=None,
+                        colors=self.colors_input.value,
                         y_columns=self.y_columns_input.value,
                     )
 
