@@ -1,0 +1,19 @@
+{
+  "chart_type": "bar",
+  "x_column": "quarter",
+  "y_columns": ["north_revenue", "south_revenue"],
+  "title": "Regional Revenue by Quarter",
+  "x_label": "Quarter",
+  "y_label": "Revenue ($)",
+  "colors": ["#2F80ED", "#F28E2B"],
+  "output": "png",
+  "figsize": [10, 6],
+  "dpi": 180,
+  "grid": true,
+  "style": "seaborn-v0_8-whitegrid",
+  "bar_width": 0.75,
+  "alpha": 0.9,
+  "mean_line": true,
+  "mean_color": "#D64545",
+  "mean_style": "dashed"
+}

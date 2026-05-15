@@ -12,7 +12,11 @@ class mention(commands.Cog):
         if self.bot.user.mention == message.content or message.content.startswith(">bot"):
             embed = discord.Embed(
             title=f"Hi **{message.author.display_name}**! You just mentioned Pipechart!",
-            description=f"Bot was created <t:1776759775:R> by IBM apprentices <@476450702672265216> and <@1066787377747599381> it is currently in development.\nCurrent bot language - **discord.py**, last boot was <t:{str(self.bot.readyAt)[:-7]}:R>",
+            description=(
+                f"Bot was created <t:1776759775:R> by IBM apprentices <@476450702672265216> and <@1066787377747599381> and is currently in development.\n"
+                f"Current bot language - **discord.py**, last boot was <t:{str(self.bot.readyAt)[:-7]}:R>\n"
+                "GitHub repo: https://github.com/Dadzzio/pipechart"
+            ),
             timestamp=datetime.now(),
             color=0x2B2D31,
             )

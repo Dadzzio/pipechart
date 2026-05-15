@@ -4,33 +4,19 @@ import json
 
 import discord
 
+from cogs.commands.charts_specs import CHART_SPECS, normalize_config
+
 
 def parse_config(config_raw: str | None) -> dict:
-    base = {
-        "chart_type": "bar",
-        "x_column": None,
-        "y_column": None,
-        "title": "PipeChart",
-        "x_label": "",
-        "y_label": "",
-        "color": "#4E79A7",
-        "output": "png",
-        "figsize": [8, 5],
-        "dpi": 150,
-    }
-
     if not config_raw:
-        return base
+        return normalize_config(None)
 
     try:
         user = json.loads(config_raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON decode error: {exc}") from None
 
-    base.update(user)
-    base["chart_type"] = str(base["chart_type"]).lower()
-    base["output"] = str(base["output"]).lower()
-    return base
+    return normalize_config(user)
 
 
 def force_chart_type(cfg: dict, chart_type: str) -> dict:
@@ -49,56 +35,63 @@ def read_csv_rows(csv_raw: str) -> tuple[list[dict], list[str]]:
     return rows, list(reader.fieldnames)
 
 
-def pick_columns(cfg: dict, columns: list[str]) -> tuple[str, str]:
+def pick_columns(cfg: dict, columns: list[str]) -> tuple[str, list[str]]:
     x_col = cfg.get("x_column") or columns[0]
-    y_col = cfg.get("y_column") or (columns[1] if len(columns) > 1 else None)
+    y_columns = cfg.get("y_columns") or []
+    if isinstance(y_columns, str):
+        y_columns = [part.strip() for part in y_columns.split(",") if part.strip()]
+    if not y_columns:
+        y_column = cfg.get("y_column")
+        if y_column:
+            y_columns = [str(y_column).strip()]
+    if not y_columns and len(columns) > 1:
+        # Default to first 3 non-x columns (or fewer if not available)
+        available_cols = [col for col in columns if col != x_col]
+        y_columns = available_cols[:3] if available_cols else [columns[1]]
 
-    if y_col is None:
+    if not y_columns:
         raise ValueError("CSV must contain at least two columns.")
     if x_col not in columns:
         raise ValueError(f"Configured x_column '{x_col}' was not found in CSV.")
-    if y_col not in columns:
-        raise ValueError(f"Configured y_column '{y_col}' was not found in CSV.")
+    for y_col in y_columns:
+        if y_col not in columns:
+            raise ValueError(f"Configured y_column '{y_col}' was not found in CSV.")
 
-    return x_col, y_col
+    return x_col, y_columns
 
 
-def extract_series(rows: list[dict], x_col: str, y_col: str) -> tuple[list[str], list[float]]:
+def extract_series(rows: list[dict], x_col: str, y_cols: list[str]) -> tuple[list[str], list[dict]]:
     labels = []
-    values = []
+    series_data = [{"label": y_col, "values": []} for y_col in y_cols]
 
     for idx, row in enumerate(rows, start=2):
         x_val = str(row.get(x_col, "")).strip()
-        y_raw = str(row.get(y_col, "")).strip()
 
         if not x_val:
             raise ValueError(f"Row {idx}: '{x_col}' is empty.")
-        if not y_raw:
-            raise ValueError(f"Row {idx}: '{y_col}' is empty.")
-
-        try:
-            y_val = float(y_raw)
-        except ValueError as exc:
-            raise ValueError(f"Row {idx}: '{y_col}' must be numeric, got '{y_raw}'.") from exc
 
         labels.append(x_val)
-        values.append(y_val)
 
-    return labels, values
+        for series, y_col in zip(series_data, y_cols):
+            y_raw = str(row.get(y_col, "")).strip()
+            if not y_raw:
+                raise ValueError(f"Row {idx}: '{y_col}' is empty.")
+
+            try:
+                y_val = float(y_raw)
+            except ValueError as exc:
+                raise ValueError(f"Row {idx}: '{y_col}' must be numeric, got '{y_raw}'.") from exc
+
+            series["values"].append(y_val)
+
+    return labels, series_data
 
 
-def validate_for_chart(chart_type: str, values: list[float]):
-    if chart_type not in {"bar", "line", "pie"}:
+def validate_for_chart(chart_type: str, series_data: list[dict]):
+    spec = CHART_SPECS.get(chart_type)
+    if not spec:
         raise ValueError("Unsupported chart_type. Use one of: bar, line, pie.")
-
-    if len(values) < 2:
-        raise ValueError("At least two rows are required.")
-
-    if chart_type == "pie":
-        if any(v < 0 for v in values):
-            raise ValueError("Pie chart does not support negative values.")
-        if sum(values) <= 0:
-            raise ValueError("Pie chart requires values with positive total sum.")
+    spec.validate(series_data)
 
 
 async def read_attachment_text(attachment: discord.Attachment) -> str:
@@ -113,7 +106,7 @@ async def prepare_chart_data(
     csv_attachment: discord.Attachment,
     json_attachment: discord.Attachment | None,
     chart_type: str | None = None,
-) -> tuple[dict, list[dict], list[str], str, str, list[str], list[float]]:
+) -> tuple[dict, list[dict], list[str], str, list[str], list[str], list[dict]]:
     if not csv_attachment.filename.lower().endswith(".csv"):
         raise ValueError("csv_file must be a .csv attachment.")
     if json_attachment and not json_attachment.filename.lower().endswith(".json"):
@@ -129,7 +122,7 @@ async def prepare_chart_data(
         raise ValueError("Unsupported output format. Use 'png', 'svg', or 'pdf'.")
 
     rows, columns = read_csv_rows(csv_raw)
-    x_col, y_col = pick_columns(cfg, columns)
-    labels, values = extract_series(rows, x_col, y_col)
-    validate_for_chart(cfg["chart_type"], values)
-    return cfg, rows, columns, x_col, y_col, labels, values
+    x_col, y_cols = pick_columns(cfg, columns)
+    labels, series_data = extract_series(rows, x_col, y_cols)
+    validate_for_chart(cfg["chart_type"], series_data)
+    return cfg, rows, columns, x_col, y_cols, labels, series_data

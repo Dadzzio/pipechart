@@ -96,13 +96,15 @@ class Pipechart(commands.Bot):
     async def init(self):   
         async with self:
             for dir in os.listdir('./cogs'):
-                    for file in os.listdir(f'./cogs/{dir}'):
-                        if file.endswith('.py'):
-                            extension = f'cogs.{dir}.{file[:-3]}'
-                            try:
-                                await self.load_extension(extension)
-                            except commands.errors.NoEntryPointError:
-                                # Helper modules can live in cogs directories but are not extensions.
-                                continue
+                if not os.path.isdir(f'./cogs/{dir}'):
+                    continue
+                for file in os.listdir(f'./cogs/{dir}'):
+                    if file.endswith('.py'):
+                        extension = f'cogs.{dir}.{file[:-3]}'
+                        try:
+                            await self.load_extension(extension)
+                        except commands.errors.NoEntryPointError:
+                            # Helper modules can live in cogs directories but are not extensions.
+                            continue
             await self.load_extension('jishaku')
             await self.start(self._get_token())
