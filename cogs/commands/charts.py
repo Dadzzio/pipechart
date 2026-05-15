@@ -222,8 +222,38 @@ class charts(commands.Cog):
         if not advanced:
             return cfg
         merged = dict(cfg)
+        # Filter out incompatible settings for pie charts
+        if cfg.get("chart_type", "").lower() == "pie":
+            advanced = dict(advanced)
+            advanced.pop("mean_line", None)
+            advanced.pop("mean_color", None)
+            advanced.pop("mean_style", None)
         merged.update(advanced)
         return normalize_config(merged)
+
+    def _sanitize_config_for_chart_type(self, cfg: dict, session_state: dict | None = None) -> dict:
+        """Remove chart-type-incompatible settings from config."""
+        cfg = dict(cfg)
+        chart_type = cfg.get("chart_type", "").lower()
+        
+        # Detect if chart type has changed from pending config
+        prev_chart_type = None
+        if session_state:
+            pending_cfg = session_state.get("pending_config", {})
+            prev_chart_type = pending_cfg.get("chart_type", "").lower() if pending_cfg else None
+        
+        if chart_type == "pie":
+            # Pie charts don't support mean lines
+            cfg["mean_line"] = False
+            cfg["mean_color"] = "red"
+            cfg["mean_style"] = "solid"
+        
+        # Clear y_columns if chart type has changed (to force re-pick)
+        if prev_chart_type and prev_chart_type != chart_type:
+            cfg["y_columns"] = []
+            cfg["y_column"] = None
+        
+        return cfg
 
     def _create_advanced_topic_select(self, session_state: dict) -> discord.ui.Select:
         """Create a Select for choosing a single advanced topic to configure."""
@@ -730,6 +760,9 @@ class charts(commands.Cog):
                 chart_type,
             )
 
+            # Sanitize config for the target chart type to remove incompatible settings
+            cfg = self._sanitize_config_for_chart_type(cfg, session_state)
+
             if mode == "edit":
                 if title is not None:
                     cfg["title"] = title.strip()
@@ -1134,6 +1167,8 @@ class charts(commands.Cog):
                     pending_cfg.get("chart_type"),
                 )
                 cfg.update(pending_cfg)
+                # Sanitize config to remove incompatible settings from previous chart type
+                cfg = cog._sanitize_config_for_chart_type(cfg, session_state)
                 labels, values = cog._refresh_series_from_config(cfg, rows, _columns)
                 cfg = cog._apply_advanced_config(cfg, session_state)
                 cog._sync_stored_config(session_state, cfg)
@@ -1834,6 +1869,8 @@ class charts(commands.Cog):
                 config_file,
                 chart_type=chart_type,
             )
+            # Sanitize config for chart type (removes incompatible options like mean_line for pie)
+            cfg = self._sanitize_config_for_chart_type(cfg)
         else:
             cfg, rows, _columns, _x_col, _y_col, labels, values = await self._get_cached_chart_data(
                 session_state,
@@ -1843,6 +1880,8 @@ class charts(commands.Cog):
             )
 
         if session_state is not None:
+            # Sanitize config for chart type (removes incompatible options like mean_line for pie)
+            cfg = self._sanitize_config_for_chart_type(cfg, session_state)
             cfg = self._apply_advanced_config(cfg, session_state)
             self._sync_stored_config(session_state, cfg)
 
