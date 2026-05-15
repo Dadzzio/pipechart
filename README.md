@@ -31,24 +31,23 @@ Contributors: [Bartosz Brzezanski](https://github.com/brzerzan), [Szymon Payerhi
 
 ## Commands
 
-Prefix commands use `\` by default. Slash commands are also available.
+Slash commands are mainly used.
 
 ### Help
 
-- `\help` - show a short command reference
+- `/help` - show a short command reference
 
 ### Interactive chart flow
 
-- `\chart_render`
 - `/chart_render`
 
 Use this when you want the guided setup flow with a private configuration panel and an initial public building message.
 
 ### Direct chart commands
 
-- `\bar` and `/bar`
-- `\line` and `/line`
-- `\pie` and `/pie`
+- `/bar`
+- `/line`
+- `/pie`
 
 Use these for direct rendering when you already know the chart type you want.
 
@@ -113,5 +112,3 @@ The JSON file can override both the basic chart fields and the newer advanced se
 
 - The interactive flow keeps track of configuration and edit panels so charts can be updated after rendering.
 - The bot uses `matplotlib` for rendering and the standard library for CSV and JSON parsing.
-
-
